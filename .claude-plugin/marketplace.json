@@ -1,0 +1,14 @@
+{
+  "name": "developmentkit",
+  "description": "Engineering, product and support toolkit for Claude Code: seven goal-oriented verbs backed by a persona and pipeline library.",
+  "owner": {
+    "name": "developmentkit maintainers"
+  },
+  "plugins": [
+    {
+      "name": "devkit",
+      "source": "./",
+      "description": "Eng + product + support toolkit: 7 goal-oriented verbs routing to a persona/pipeline library. Vendor-recommended tooling first (twg for Atlassian, gh for GitHub)."
+    }
+  ]
+}

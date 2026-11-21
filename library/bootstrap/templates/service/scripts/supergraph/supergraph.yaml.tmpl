@@ -1,0 +1,10 @@
+# Local supergraph for this service. Each GraphQL module is one subgraph served
+# by the same binary at /<module>. Add an entry per module.
+federation_version: =2.9.1
+subgraphs:
+{{- if .Module.GraphQL }}
+  {{ .Module.Route }}:
+    routing_url: http://127.0.0.1:{{ .Service.Port }}/{{ .Module.Route }}
+    schema:
+      file: ./schema/{{ .Module.Route }}.graphql
+{{- end }}

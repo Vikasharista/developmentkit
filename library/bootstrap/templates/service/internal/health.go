@@ -1,0 +1,45 @@
+package internal
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"time"
+
+	"bitbucket.org/<your-org>/core-lib/database/postgres"
+	"github.com/gin-gonic/gin"
+)
+
+const healthzTimeout = 2 * time.Second
+
+// getDatabase returns the shared pool; tests replace it.
+var getDatabase = postgres.GetDatabase
+
+// pingDatabase pings the shared Postgres pool.
+func pingDatabase(ctx context.Context) error {
+	db := getDatabase()
+	if db == nil {
+		return errors.New("database not initialised")
+	}
+	return db.WithContext(ctx).Exec("SELECT 1").Error
+}
+
+// healthzHandler answers the readiness check: 200 when the database answers
+// within 2 s, 503 otherwise. The error text is not returned to the caller.
+func healthzHandler(ping func(context.Context) error) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), healthzTimeout)
+		defer cancel()
+		if err := ping(ctx); err != nil {
+			_ = c.Error(err)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"status": "unavailable", "database": "down"})
+			return
+		}
+		c.JSON(http.StatusOK, gin.H{"status": "ok", "database": "up"})
+	}
+}
+
+// livezHandler answers 200 while the process serves HTTP, without touching the database.
+func livezHandler(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
+}

@@ -1,0 +1,60 @@
+package main
+
+import (
+	"log"
+	"os"
+	"path/filepath"
+
+	"{{ .Service.CoreModule }}/cmd"
+	"{{ .Service.CoreModule }}/config"
+	"{{ .Service.CoreModule }}/logger"
+	"{{ .Service.ModulePath }}/internal"
+)
+
+func main() {
+	if err := config.Init(initConfigParams()); err != nil {
+		log.Fatalf("failed to initialize config: %s", err)
+	}
+
+	if _, err := logger.Init(config.Viper.GetInt("application.log_level")); err != nil {
+		log.Fatalf("failed to initialize logger, error: %s", err)
+	}
+
+	// core-lib owns the cobra root: `serve`, `migrate up [n]`, `migrate down [n]`.
+	cmd.Execute(&cmd.ExecuteParams{
+		Dsn:       config.Viper.GetString("database.postgres.dsn"),
+		ServeFunc: internal.Init,
+	})
+}
+
+// initConfigParams builds config paths. The override is applied only when the
+// override file exists, so a missing config/local.yaml does not abort startup.
+func initConfigParams() config.InitConfigParams {
+	params := config.InitConfigParams{
+		BaseConfigPath: getEnv("BASE_CONFIG_PATH", "config"),
+		BaseConfigFile: getEnv("BASE_CONFIG_FILE", "default"),
+	}
+
+	overridePath := os.Getenv("OVERRIDE_CONFIG_PATH")
+	overrideFile := os.Getenv("OVERRIDE_CONFIG_FILE")
+	if overridePath == "" || overrideFile == "" {
+		return params
+	}
+
+	overrideYAML := filepath.Join(overridePath, overrideFile+".yaml")
+	if _, err := os.Stat(overrideYAML); err != nil {
+		log.Printf("config override %s not usable (%v), continuing with base config only", overrideYAML, err)
+		return params
+	}
+
+	params.OverrideConfigPath = overridePath
+	params.OverrideConfigFile = overrideFile
+	return params
+}
+
+func getEnv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}

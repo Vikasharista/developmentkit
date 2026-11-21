@@ -1,0 +1,5 @@
+{{- if .Module.GraphQL -}}
+directive @goField(forceResolver: Boolean, name: String) on INPUT_FIELD_DEFINITION | FIELD_DEFINITION
+directive @authenticate on FIELD_DEFINITION
+directive @hasPermission(permission: String!) on FIELD_DEFINITION
+{{- end }}

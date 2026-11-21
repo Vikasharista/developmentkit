@@ -1,0 +1,30 @@
+# builder image
+FROM golang:1.25.5-alpine3.23 AS builder
+ENV GO111MODULE=on
+ENV GOPRIVATE="bitbucket.org/<your-org>/core-lib"
+RUN apk add --no-cache openssh-client git ca-certificates
+
+RUN mkdir -p -m 0400 ~/.ssh && ssh-keyscan bitbucket.org >> ~/.ssh/known_hosts && \
+    git config --global url."git@bitbucket.org:".insteadOf "https://bitbucket.org/"
+ARG BB_INFRA_USER_PRIVATE_KEY
+RUN echo "$BB_INFRA_USER_PRIVATE_KEY" > ~/.ssh/id_rsa && chmod 400 ~/.ssh/id_rsa
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o app .
+
+# runtime image
+FROM alpine:3.23
+RUN apk add --no-cache ca-certificates tzdata && update-ca-certificates
+
+WORKDIR /app/
+COPY migrations /app/migrations
+COPY config /app/config
+COPY entrypoint.sh /app/
+COPY --from=builder /build/app .
+RUN chmod +x entrypoint.sh
+
+ENTRYPOINT [ "./entrypoint.sh" ]
+CMD [ "serve" ]

@@ -1,0 +1,47 @@
+{{- if .Module.GraphQL -}}
+package mapper
+
+import (
+	"testing"
+
+	coredto "{{ .Service.CoreModule }}/dto"
+	"{{ .ModuleImport }}/graphql/generated"
+	"github.com/stretchr/testify/require"
+)
+
+func TestMapQueryOptionsToQueryBuilder(t *testing.T) {
+	desc := generated.SortOrderDesc
+	asc := generated.SortOrderAsc
+	in := generated.FilterOperatorIn
+
+	got := MapQueryOptionsToQueryBuilder(QueryOptions{
+		Page: &generated.PageInput{FetchSize: 20, PageNumber: 3},
+		Sort: []*generated.Sort{
+			{SortBy: "createdAt", Order: &desc},
+			{SortBy: "id", Order: &asc},
+			{SortBy: "id"},
+		},
+		Filters: []*generated.Filter{
+			{Field: "id", Operator: &in, Value: []interface{}{"a", "b"}},
+			{Field: "isActive", Value: true},
+		},
+	})
+
+	require.Equal(t, 20, got.Limit)
+	require.Equal(t, 40, got.Offset)
+	require.Equal(t, []*coredto.Sort{
+		{SortBy: "createdAt", Order: coredto.DESC},
+		{SortBy: "id", Order: coredto.ASC},
+		{SortBy: "id", Order: coredto.ASC},
+	}, got.Sort)
+	require.Equal(t, []coredto.Filter{
+		{Field: "id", Operator: "IN", Value: []interface{}{"a", "b"}},
+		{Field: "isActive", Operator: "EQ", Value: true},
+	}, got.Filters)
+}
+
+func TestMapQueryOptionsToQueryBuilder_Empty(t *testing.T) {
+	got := MapQueryOptionsToQueryBuilder(QueryOptions{})
+	require.Equal(t, &coredto.QueryBuilder{}, got)
+}
+{{- end }}

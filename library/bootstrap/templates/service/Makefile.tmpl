@@ -1,0 +1,97 @@
+# Everyday tasks for {{ .Service.Name }}. `make` lists them.
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
+
+CONFIG            ?= local
+RUN               := OVERRIDE_CONFIG_PATH=config OVERRIDE_CONFIG_FILE=$(CONFIG)
+DB_PORT           ?= {{ .Service.DBPort }}
+TEST_DB           ?= {{ .Service.DBName }}_test
+TEST_DATABASE_DSN ?= postgres://postgres:postgres@localhost:$(DB_PORT)/$(TEST_DB)?sslmode=disable
+GQLGEN            := go run github.com/99designs/gqlgen
+MODULES           := $(patsubst internal/app/%/gqlgen.yml,%,$(wildcard internal/app/*/gqlgen.yml))
+# CI brings its own Postgres service; locally the docker compose one is started on demand.
+DB_PREREQS        := $(if $(CI),,db-up db-create-test)
+
+export TEST_DATABASE_DSN DB_PORT
+
+.PHONY: help setup db-up db-down db-reset db-create-test migrate-up migrate-down migrate-new \
+        serve debug gql gql-all build vet lint test test-integration e2e cover smoke docker supergraph
+
+help: ## List targets
+	@grep -hE '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "} {printf "  \033[36m%-17s\033[0m %s\n", $$1, $$2}'
+
+setup: ## Install dev tools, create config/local.yaml, download modules
+	go install github.com/go-delve/delve/cmd/dlv@v1.26.0
+	@[ -f config/local.yaml ] || (cp config/local.yaml.example config/local.yaml && echo "created config/local.yaml")
+	go mod download
+
+db-up: ## Start local Postgres (docker compose) and wait until it is ready
+	docker compose up -d --wait postgres
+
+db-down: ## Stop local Postgres, keep its data
+	docker compose down
+
+db-reset: ## Drop local Postgres data and start fresh
+	docker compose down -v
+	docker compose up -d --wait postgres
+
+db-create-test: ## Create the test database used by integration and e2e tests
+	@docker compose exec -T postgres psql -U postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$(TEST_DB)'" | grep -q 1 \
+		|| docker compose exec -T postgres createdb -U postgres $(TEST_DB)
+
+migrate-up: ## Apply pending migrations to the CONFIG database
+	$(RUN) go run . migrate up
+
+migrate-down: ## Roll back N migrations (default 1): make migrate-down N=2
+	$(RUN) go run . migrate down $(or $(N),1)
+
+migrate-new: ## Create the next numbered migration pair: make migrate-new NAME=add_widget_color
+	@test -n "$(NAME)" || (echo "usage: make migrate-new NAME=snake_case_description" && exit 1)
+	@last=$$(ls migrations | sed -nE 's/^([0-9]{6})_.*/\1/p' | sort | tail -1); \
+		next=$$(printf "%06d" $$((10#$${last:-0} + 1))); \
+		touch migrations/$${next}_$(NAME).up.sql migrations/$${next}_$(NAME).down.sql; \
+		echo "created migrations/$${next}_$(NAME).up.sql and .down.sql"
+
+serve: ## Run the server with config/local.yaml
+	$(RUN) go run . serve
+
+debug: ## Run the server under dlv, headless on :2345 (attach from VS Code or GoLand)
+	$(RUN) dlv debug --headless --listen=:2345 --api-version=2 --accept-multiclient . -- serve
+
+gql: ## Regenerate one module's GraphQL code: make gql MODULE={{ .Module.Name }}
+	@test -n "$(MODULE)" || (echo "usage: make gql MODULE=<module>; modules: $(MODULES)" && exit 1)
+	cd internal/app/$(MODULE) && $(GQLGEN) generate
+
+gql-all: ## Regenerate GraphQL code for every module
+	@for m in $(MODULES); do echo "gqlgen $$m"; (cd internal/app/$$m && $(GQLGEN) generate) || exit 1; done
+
+build: ## Build the binary to ./app
+	go build -o app .
+
+vet: ## go vet, including integration-tagged files
+	go vet ./...
+	go vet -tags integration ./...
+
+lint: vet ## golangci-lint when installed, otherwise vet only
+	@if command -v golangci-lint >/dev/null; then golangci-lint run ./...; else echo "golangci-lint not installed; ran go vet only"; fi
+
+test: ## Unit tests (no database)
+	go test ./...
+
+test-integration: $(DB_PREREQS) ## Unit + integration tests against the test database
+	go test -tags integration -count=1 ./...
+
+e2e: $(DB_PREREQS) ## End-to-end tests: real router, real Postgres, every operation over HTTP
+	go test -tags integration -count=1 -run 'E2E' -v ./...
+
+cover: $(DB_PREREQS) ## All tests with the 100% coverage gate on hand-written code
+	./scripts/coverage.sh
+
+smoke: ## Probe a running server (make serve first): health, then the GraphQL endpoint
+	./scripts/smoke.sh
+
+docker: ## Build the image locally (needs your Bitbucket SSH key for core-lib)
+	docker build --build-arg BB_INFRA_USER_PRIVATE_KEY="$$(cat ~/.ssh/id_rsa)" -t {{ .Service.Name }}:local .
+
+supergraph: ## Compose the local supergraph from every module schema (needs rover)
+	./scripts/supergraph/compose.sh

@@ -1,0 +1,23 @@
+{{- if and .Module.GraphQL .Entity.Loader -}}
+package resolver
+
+// This file will be automatically regenerated based on the schema, any resolver implementations
+// will be copied through when generating and any unknown code will be moved to the end.
+
+import (
+	"context"
+
+	"{{ .ModuleImport }}/graphql/generated"
+	"{{ .ModuleImport }}/graphql/loader"
+	"{{ .ModuleImport }}/graphql/mapper"
+)
+
+// Find{{ .Entity.Name }}ByID is the resolver for the find{{ .Entity.Name }}ByID field.
+func (r *entityResolver) Find{{ .Entity.Name }}ByID(ctx context.Context, id {{ .Entity.IDGo }}) (*generated.{{ .Entity.Name }}, error) {
+	{{ .Entity.Var }}, err := loader.GetLoader(ctx).{{ .Entity.Name }}Loader.Load(ctx, id)()
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Name }}ToGraphqlModel({{ .Entity.Var }})
+}
+{{- end }}

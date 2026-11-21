@@ -1,0 +1,84 @@
+{{- if .Module.GraphQL -}}
+{{- $e := .Entity -}}
+{{- if or (.Entity.Has "list") (.Entity.Has "get") }}
+extend type Query {
+{{- if .Entity.Has "list" }}
+  {{ .Entity.PluralVar }}(filters: [Filter!], page: PageInput! = {}, sort: [Sort!]): {{ .Entity.Plural }}! {{ .Entity.Directive "list" }}
+{{- end }}
+{{- if .Entity.Has "get" }}
+  {{ .Entity.Var }}(id: {{ .Entity.IDGQL }}!): {{ .Entity.Name }} {{ .Entity.Directive "get" }}
+{{- end }}
+}
+{{- end }}
+{{- if or (.Entity.Has "create") (.Entity.Has "update") (.Entity.Has "delete") }}
+
+extend type Mutation {
+{{- if .Entity.Has "create" }}
+  create{{ .Entity.Name }}(input: Create{{ .Entity.Name }}Input!): {{ .Entity.Name }}! {{ .Entity.Directive "create" }}
+{{- end }}
+{{- if .Entity.Has "update" }}
+  update{{ .Entity.Name }}(id: {{ .Entity.IDGQL }}!, input: Update{{ .Entity.Name }}Input!): {{ .Entity.Name }}! {{ .Entity.Directive "update" }}
+{{- end }}
+{{- if .Entity.Has "delete" }}
+  delete{{ .Entity.Name }}(id: {{ .Entity.IDGQL }}!): {{ .Entity.Name }}! {{ .Entity.Directive "delete" }}
+{{- end }}
+}
+{{- end }}
+
+type {{ .Entity.Plural }} {
+  data: [{{ .Entity.Name }}!]!
+  totalCount: Int!
+}
+
+{{ if .Entity.Description }}"""
+{{ .Entity.Description }}
+"""
+{{ end -}}
+type {{ .Entity.Name }}{{ if .Entity.Loader }} @key(fields: "id"){{ end }} {
+  id: {{ .Entity.IDGQL }}!
+{{- range .Entity.Fields }}
+{{- if .Comment }}
+  "{{ .Comment }}"
+{{- end }}
+  {{ .GQLName }}: {{ .GQLType $e.Name }}
+{{- end }}
+  isActive: Boolean!
+{{- if .Entity.Versioned }}
+  version: Int!
+{{- end }}
+  createdAt: Time!
+  updatedAt: Time
+  createdBy: String!
+  updatedBy: String
+}
+{{- if .Entity.Has "create" }}
+
+input Create{{ .Entity.Name }}Input {
+{{- range .Entity.Fields }}
+  {{ .GQLName }}: {{ .GQLCreateType $e.Name }}
+{{- end }}
+  isActive: Boolean
+}
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+input Update{{ .Entity.Name }}Input {
+{{- range .Entity.Fields }}
+  {{ .GQLName }}: {{ .GQLBaseType $e.Name }}
+{{- end }}
+  isActive: Boolean
+{{- if .Entity.Versioned }}
+  "The version you read; the update fails with DUPLICATE_REQUEST if the row changed since."
+  version: Int
+{{- end }}
+}
+{{- end }}
+{{- range .Entity.Enums }}
+
+enum {{ .GQLBaseType $e.Name }} {
+{{- range .Enum }}
+  {{ . }}
+{{- end }}
+}
+{{- end }}
+{{- end }}

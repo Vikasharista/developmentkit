@@ -1,0 +1,47 @@
+package mapper
+
+import (
+	"{{ .Service.CoreModule }}/logger"
+	"{{ .ModuleImport }}/dto"
+	"{{ .ModuleImport }}/model"
+	"go.uber.org/zap"
+)
+
+func MapCreate{{ .Entity.Name }}DtoToModel(request *dto.Create{{ .Entity.Name }}Request) (*model.{{ .Entity.Name }}, error) {
+	{{ .Entity.Var }} := &model.{{ .Entity.Name }}{}
+	if err := CopyWithOption({{ .Entity.Var }}, request, copyAll); err != nil {
+		logger.GetLogger().With(zap.Error(err)).Error("{{ .LogPrefix }}.Mapper.MapCreate{{ .Entity.Name }}DtoToModel.Error")
+		return nil, err
+	}
+	return {{ .Entity.Var }}, nil
+}
+
+// MapUpdate{{ .Entity.Name }}DtoToModel applies the non-nil fields of the patch to the stored row.
+func MapUpdate{{ .Entity.Name }}DtoToModel(request *dto.Update{{ .Entity.Name }}Request, {{ .Entity.Var }} *model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error) {
+	if err := CopyWithOption({{ .Entity.Var }}, request, copyIgnoringEmpty); err != nil {
+		logger.GetLogger().With(zap.Error(err)).Error("{{ .LogPrefix }}.Mapper.MapUpdate{{ .Entity.Name }}DtoToModel.Error")
+		return nil, err
+	}
+	return {{ .Entity.Var }}, nil
+}
+
+func Map{{ .Entity.Name }}ModelToDto({{ .Entity.Var }} *model.{{ .Entity.Name }}) (*dto.{{ .Entity.Name }}, error) {
+	result := &dto.{{ .Entity.Name }}{}
+	if err := CopyWithOption(result, {{ .Entity.Var }}, copyIgnoringEmpty); err != nil {
+		logger.GetLogger().With(zap.Error(err)).Error("{{ .LogPrefix }}.Mapper.Map{{ .Entity.Name }}ModelToDto.Error")
+		return nil, err
+	}
+	return result, nil
+}
+
+func Map{{ .Entity.Plural }}ModelToDto({{ .Entity.PluralVar }} []*model.{{ .Entity.Name }}, totalCount int) (*dto.{{ .Entity.Plural }}, error) {
+	result := &dto.{{ .Entity.Plural }}{Data: make([]*dto.{{ .Entity.Name }}, 0, len({{ .Entity.PluralVar }})), TotalCount: totalCount}
+	for _, {{ .Entity.Var }} := range {{ .Entity.PluralVar }} {
+		mapped, err := Map{{ .Entity.Name }}ModelToDto({{ .Entity.Var }})
+		if err != nil {
+			return nil, err
+		}
+		result.Data = append(result.Data, mapped)
+	}
+	return result, nil
+}

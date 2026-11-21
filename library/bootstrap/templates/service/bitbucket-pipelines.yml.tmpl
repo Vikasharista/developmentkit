@@ -1,0 +1,42 @@
+options:
+  max-time: 20
+
+definitions:
+  services:
+    docker:
+      memory: 3072
+    postgres:
+      image: postgres:16-alpine
+      variables:
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres
+        POSTGRES_DB: {{ .Service.DBName }}
+  steps:
+    - step: &test
+        name: test (unit + integration, 100% coverage gate)
+        image: golang:1.25.5
+        services:
+          - postgres
+        script:
+          - mkdir -p ~/.ssh && echo "$BB_INFRA_USER_PRIVATE_KEY" > ~/.ssh/id_rsa && chmod 400 ~/.ssh/id_rsa
+          - ssh-keyscan bitbucket.org >> ~/.ssh/known_hosts
+          - git config --global url."git@bitbucket.org:".insteadOf "https://bitbucket.org/"
+          - export GOPRIVATE={{ .Service.CoreModule }}
+          - make cover TEST_DATABASE_DSN="postgres://postgres:postgres@localhost:5432/{{ .Service.DBName }}?sslmode=disable"
+
+pipelines:
+  pull-requests:
+    '**':
+      - step: *test
+  tags:
+    '**':
+      - step: *test
+      - step:
+          name: build
+          image: atlassian/pipelines-awscli
+          services:
+            - docker
+          script:
+            - apk add --update curl curl-dev openssl && rm -rf /var/cache/apk/*
+            - curl -fsSL -o buildscript.sh https://bitbucket.org/{{ .Service.OrgSlug }}/build-scripts/raw/master/deploy-build.sh
+            - bash -v buildscript.sh

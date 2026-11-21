@@ -1,0 +1,120 @@
+//go:build integration
+
+// Package pgtest prepares the integration-test database: it applies every
+// migration under <repo>/migrations to TEST_DATABASE_DSN once per test binary,
+// connects core-lib's shared pool, and hands each test its own namespace so tests
+// never see each other's rows and never need truncation.
+package pgtest
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"sync"
+	"testing"
+
+	"{{ .Service.CoreModule }}/config"
+	"{{ .Service.CoreModule }}/constant"
+	"{{ .Service.CoreModule }}/database/postgres"
+	"{{ .Service.CoreModule }}/logger"
+	"github.com/golang-migrate/migrate/v4"
+	_ "github.com/golang-migrate/migrate/v4/database/postgres"
+	_ "github.com/golang-migrate/migrate/v4/source/file"
+	"github.com/spf13/viper"
+)
+
+// User is the X-User-Id every test acts as.
+const User = "integration-test-user"
+
+var (
+	initOnce sync.Once
+	initErr  error
+)
+
+// DSN is the test database connection string.
+func DSN() string { return os.Getenv("TEST_DATABASE_DSN") }
+
+// Init migrates the test database and connects the shared pool. Call it from TestMain.
+func Init() error {
+	initOnce.Do(func() { initErr = initialise() })
+	return initErr
+}
+
+func initialise() error {
+	dsn := DSN()
+	if dsn == "" {
+		return errors.New("TEST_DATABASE_DSN is not set; run `make test-integration` or export it")
+	}
+	if _, err := logger.Init(0); err != nil {
+		return err
+	}
+	// Constructors in some modules read config while the factories build them.
+	// Tests that need values set them on this empty instance.
+	if config.Viper == nil {
+		config.Viper = viper.New()
+	}
+	root, err := repoRoot()
+	if err != nil {
+		return err
+	}
+	m, err := migrate.New("file://"+filepath.Join(root, "migrations"), dsn)
+	if err != nil {
+		return fmt.Errorf("open migrations: %w", err)
+	}
+	defer m.Close()
+	if err := m.Up(); err != nil && !errors.Is(err, migrate.ErrNoChange) {
+		return fmt.Errorf("apply migrations: %w", err)
+	}
+	return postgres.InitPostgres(&postgres.PostgresConnectionConfig{DSN: dsn, MaxIdleConnections: 2, MaxOpenConnections: 10})
+}
+
+// Namespace returns a namespace no other test uses.
+func Namespace(t testing.TB) string {
+	t.Helper()
+	buf := make([]byte, 6)
+	if _, err := rand.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	return "it" + hex.EncodeToString(buf)
+}
+
+// Context returns a context carrying namespace and the test user, the way
+// core-lib's EnrichContext builds it from request headers.
+func Context(namespace string) context.Context {
+	ctx := context.Background()
+	ctx = context.WithValue(ctx, constant.CtxNamespaceID, namespace)
+	ctx = context.WithValue(ctx, constant.CtxNamespaceKey, constant.CtxNamespaceID)
+	ctx = context.WithValue(ctx, constant.CtxUserID, User)
+	ctx = context.WithValue(ctx, constant.CtxUserKey, constant.CtxUserID)
+	return ctx
+}
+
+// Main is the body of a package's TestMain.
+func Main(m *testing.M) {
+	if err := Init(); err != nil {
+		fmt.Fprintln(os.Stderr, "pgtest:", err)
+		os.Exit(1)
+	}
+	os.Exit(m.Run())
+}
+
+func repoRoot() (string, error) {
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", err
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir, nil
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return "", errors.New("go.mod not found above the test directory")
+		}
+		dir = parent
+	}
+}

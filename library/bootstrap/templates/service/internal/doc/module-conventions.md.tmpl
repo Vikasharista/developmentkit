@@ -1,0 +1,27 @@
+# Module conventions
+
+A module is `internal/app/<module>`. Layout:
+
+```
+<module>/
+  README.md        what it owns, its surface, its tables
+  gqlgen.yml       when it is a GraphQL subgraph
+  auth/            directives for GraphQL, the same checks as gin middleware for REST
+  model/           GORM structs embedding a core-lib base model
+  dto/             service-facing types; Create*/Update* requests (pointers = patch semantics)
+  repository/      SQL only; table constant, namespace filter, soft delete, RepositoryError
+  service/         validation, enum checks, list allow-lists, business rules
+  mapper/          dto <-> model with copier (CopyWithOption is swappable in tests)
+  graphql/         schema/, generated/ (never edit), resolver/ (thin), mapper/ (gql <-> dto), loader/
+  rest/            router.go (Register + error mapping), <entity>_controller.go
+```
+
+Rules:
+
+- Resolvers and controllers only translate and call the service.
+- The service validates every input it receives, including list filters and sorts.
+- Repositories never trust the caller's namespace; they read it from the context.
+- Factories hand out singletons through `sync.Once`; constructors take no arguments.
+- Logging uses `logger.GetLogger()` with messages `<Module>.<Entity>.<Layer>.<Method>.Error`.
+- Each GraphQL module carries its own copy of the shared schema files (directive, enum, filter, page,
+  sort, scalar) so each subgraph composes on its own.

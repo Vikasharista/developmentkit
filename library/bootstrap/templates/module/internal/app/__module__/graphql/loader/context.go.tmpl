@@ -1,0 +1,19 @@
+{{- if and .Module.GraphQL .Entity.Loader -}}
+package loader
+
+import "context"
+
+type ctxKey string
+
+const masterLoaderKey = ctxKey("data-loader")
+
+// GetLoader returns the request's loaders. The handler's middleware always sets them.
+func GetLoader(ctx context.Context) *MasterLoader {
+	return ctx.Value(masterLoaderKey).(*MasterLoader)
+}
+
+// WithLoader attaches a fresh set of loaders to the request context.
+func WithLoader(ctx context.Context) context.Context {
+	return context.WithValue(ctx, masterLoaderKey, NewMasterLoader())
+}
+{{- end }}

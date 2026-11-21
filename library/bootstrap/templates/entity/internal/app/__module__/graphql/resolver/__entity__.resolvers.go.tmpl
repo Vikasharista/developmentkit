@@ -1,0 +1,77 @@
+{{- if .Module.GraphQL -}}
+package resolver
+
+// This file will be automatically regenerated based on the schema, any resolver implementations
+// will be copied through when generating and any unknown code will be moved to the end.
+
+import (
+	"context"
+
+	"{{ .ModuleImport }}/graphql/generated"
+	"{{ .ModuleImport }}/graphql/mapper"
+)
+{{- if .Entity.Has "create" }}
+
+// Create{{ .Entity.Name }} is the resolver for the create{{ .Entity.Name }} field.
+func (r *mutationResolver) Create{{ .Entity.Name }}(ctx context.Context, input generated.Create{{ .Entity.Name }}Input) (*generated.{{ .Entity.Name }}, error) {
+	request, err := mapper.MapCreate{{ .Entity.Name }}InputToDto(&input)
+	if err != nil {
+		return nil, err
+	}
+	created, err := r.{{ .Entity.Name }}Service.Create(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Name }}ToGraphqlModel(created)
+}
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+// Update{{ .Entity.Name }} is the resolver for the update{{ .Entity.Name }} field.
+func (r *mutationResolver) Update{{ .Entity.Name }}(ctx context.Context, id {{ .Entity.IDGo }}, input generated.Update{{ .Entity.Name }}Input) (*generated.{{ .Entity.Name }}, error) {
+	request, err := mapper.MapUpdate{{ .Entity.Name }}InputToDto(&input)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := r.{{ .Entity.Name }}Service.Update(ctx, id, request)
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Name }}ToGraphqlModel(updated)
+}
+{{- end }}
+{{- if .Entity.Has "delete" }}
+
+// Delete{{ .Entity.Name }} is the resolver for the delete{{ .Entity.Name }} field.
+func (r *mutationResolver) Delete{{ .Entity.Name }}(ctx context.Context, id {{ .Entity.IDGo }}) (*generated.{{ .Entity.Name }}, error) {
+	deleted, err := r.{{ .Entity.Name }}Service.Delete(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Name }}ToGraphqlModel(deleted)
+}
+{{- end }}
+{{- if .Entity.Has "list" }}
+
+// {{ .Entity.Plural }} is the resolver for the {{ .Entity.PluralVar }} field.
+func (r *queryResolver) {{ .Entity.Plural }}(ctx context.Context, filters []*generated.Filter, page generated.PageInput, sort []*generated.Sort) (*generated.{{ .Entity.Plural }}, error) {
+	queryBuilder := mapper.MapQueryOptionsToQueryBuilder(mapper.QueryOptions{Filters: filters, Page: &page, Sort: sort})
+	{{ .Entity.PluralVar }}, err := r.{{ .Entity.Name }}Service.Get(ctx, queryBuilder)
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Plural }}ToGraphqlModel({{ .Entity.PluralVar }})
+}
+{{- end }}
+{{- if .Entity.Has "get" }}
+
+// {{ .Entity.Name }} is the resolver for the {{ .Entity.Var }} field.
+func (r *queryResolver) {{ .Entity.Name }}(ctx context.Context, id {{ .Entity.IDGo }}) (*generated.{{ .Entity.Name }}, error) {
+	{{ .Entity.Var }}, err := r.{{ .Entity.Name }}Service.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Name }}ToGraphqlModel({{ .Entity.Var }})
+}
+{{- end }}
+{{- end }}

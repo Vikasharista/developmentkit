@@ -1,0 +1,12 @@
+# Deployment
+
+- **Build**: tag a commit; `bitbucket-pipelines.yml` runs the test step (100% coverage gate against a
+  Postgres service), then the deploy tool's `deploy-build.sh` builds the image, pushes it and publishes the Helm chart.
+  Pull requests run the test step only.
+- **Image**: `Dockerfile` builds a static binary; the runtime image carries `migrations/` and `config/`.
+  `entrypoint.sh` links Helm-mounted files from `/etc/app` next to the binary.
+- **Config**: `config/default.yaml` is the base. Each environment mounts an override and sets secrets as
+  `APP_*` variables (for example `APP_DATABASE_POSTGRES_DSN`). Gateway routing is in `.deploy/values.yaml`.
+- **Migrations**: run `./app migrate up` as a job before the new pods start (Helm `migrations.enabled`).
+- **Federation**: each GraphQL module must be listed in the environment's Apollo Router config with
+  `routing_url: http://{{ .Service.Name }}/<module>`.

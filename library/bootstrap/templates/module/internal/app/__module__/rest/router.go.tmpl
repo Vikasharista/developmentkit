@@ -1,0 +1,66 @@
+{{- if .Module.REST -}}
+// Package rest exposes the {{ .ModuleTitle }} module over gin, under /{{ .Module.Route }}/v1.
+package rest
+
+import (
+	"net/http"
+
+	coreerrors "{{ .Service.CoreModule }}/errors"
+	coregraphql "{{ .Service.CoreModule }}/graphql"
+	"{{ .ModuleImport }}/auth"
+	"{{ .ModuleImport }}/service"
+	"github.com/gin-gonic/gin"
+)
+
+// Init mounts the module's routes on group with the configured auth.
+func Init(group gin.IRouter) error {
+	directives, err := auth.New()
+	if err != nil {
+		return err
+	}
+	Register(group, directives)
+	return nil
+}
+
+// Register mounts the routes with the given directives; tests pass auth.PassThrough().
+func Register(group gin.IRouter, directives *auth.Directives) {
+	group.Use(enrichContext())
+	register{{ .Entity.Name }}Routes(group, directives, new{{ .Entity.Name }}Controller(service.GetFactory().Get{{ .Entity.Name }}Service()))
+	// bootstrap:rest-routes
+}
+
+// enrichContext copies the X-Namespace-Id, X-User-Id and session headers into the
+// request context exactly as the GraphQL handler does.
+func enrichContext() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		coregraphql.EnrichContext(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+			c.Request = r
+			c.Next()
+		})).ServeHTTP(c.Writer, c.Request)
+	}
+}
+
+// statusByCode maps core-lib error codes to HTTP statuses.
+var statusByCode = map[string]int{
+	coreerrors.BadRequestErrorCode:            http.StatusBadRequest,
+	coreerrors.RequiredHeaderMissingErrorCode: http.StatusBadRequest,
+	coreerrors.RecordNotFoundErrorCode:        http.StatusNotFound,
+	coreerrors.DuplicateRequestErrorCode:      http.StatusConflict,
+	coreerrors.ForbiddenErrorCode:             http.StatusForbidden,
+	coreerrors.UnauthenticatedErrorCode:       http.StatusUnauthorized,
+	coreerrors.UnauthorisedErrorCode:          http.StatusUnauthorized,
+}
+
+// writeError answers with the status for a core-lib error code, 500 otherwise.
+// Only coded errors carry their message to the caller.
+func writeError(c *gin.Context, err error) {
+	if baseErr, ok := err.(coreerrors.BaseErr); ok {
+		if status, known := statusByCode[baseErr.Code()]; known {
+			c.JSON(status, gin.H{"code": baseErr.Code(), "error": baseErr.Error()})
+			return
+		}
+	}
+	_ = c.Error(err)
+	c.JSON(http.StatusInternalServerError, gin.H{"code": coreerrors.InternalServerErrorCode, "error": "internal server error"})
+}
+{{- end }}

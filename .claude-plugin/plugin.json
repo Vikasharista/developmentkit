@@ -1,0 +1,27 @@
+{
+  "name": "devkit",
+  "version": "0.5.1",
+  "description": "Engineering + product + support toolkit. Seven goal-oriented verbs (ship, bootstrap, review, understand, product, deliver, support) that route internally to a library of senior-role personas and pipelines, plus PRD authoring, Playwright E2E and PR review. External services are reached via vendor-recommended tooling first (twg CLI for Atlassian, gh for GitHub), then vendor MCPs, then gitkraken MCP, then REST.",
+  "author": {
+    "name": "developmentkit maintainers"
+  },
+  "keywords": [
+    "atlassian",
+    "bitbucket",
+    "bootstrap",
+    "code-review",
+    "confluence",
+    "gh",
+    "github",
+    "goal-loop",
+    "golang",
+    "jira",
+    "pipeline",
+    "prd",
+    "product",
+    "project-management",
+    "qa",
+    "scaffold",
+    "twg"
+  ]
+}

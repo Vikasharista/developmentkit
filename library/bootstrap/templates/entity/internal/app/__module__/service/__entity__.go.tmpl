@@ -1,0 +1,229 @@
+package service
+
+import (
+	"context"
+{{- if .Entity.Has "list" }}
+	"fmt"
+{{- end }}
+{{- if and (.Entity.Has "update") (.Entity.HasType "string") }}
+	"unicode/utf8"
+{{- end }}
+
+{{- if .Entity.Has "list" }}
+	coredto "{{ .Service.CoreModule }}/dto"
+{{- end }}
+	"{{ .Service.CoreModule }}/errors"
+	"{{ .Service.CoreModule }}/validator"
+	"{{ .ModuleImport }}/dto"
+	"{{ .ModuleImport }}/mapper"
+	"{{ .ModuleImport }}/repository"
+{{- if .Entity.Loader }}
+	rqp "github.com/timsolov/rest-query-parser"
+{{- end }}
+)
+{{ $e := .Entity }}
+{{- range .Entity.Enums }}
+// {{ $e.Var }}{{ .GoName }}Values are the values the {{ .Name }} CHECK constraint accepts.
+var {{ $e.Var }}{{ .GoName }}Values = map[string]bool{ {{- range .Enum }}"{{ . }}": true, {{ end -}} }
+{{ end }}
+{{- if .Entity.Has "list" }}
+// {{ .Entity.Var }}QueryColumns is the allow-list for list filters and sorts. Anything
+// else is rejected before it reaches SQL.
+var {{ .Entity.Var }}QueryColumns = map[string]bool{ {{- range .Entity.Sortable }}"{{ . }}": true, {{ end -}} }
+
+// {{ .Entity.Var }}QueryOperators are the filter operators a list query may use.
+var {{ .Entity.Var }}QueryOperators = map[string]bool{
+	"EQ": true, "NE": true, "GT": true, "GTE": true, "LT": true, "LTE": true,
+	"LIKE": true, "ILIKE": true, "IN": true, "NIN": true, "IS": true, "NOT": true,
+}
+
+const (
+	default{{ .Entity.Name }}PageSize = 10
+	max{{ .Entity.Name }}PageSize     = 500
+)
+{{- end }}
+
+type {{ .Entity.Name }}Service interface {
+{{- if .Entity.Has "create" }}
+	Create(ctx context.Context, request *dto.Create{{ .Entity.Name }}Request) (*dto.{{ .Entity.Name }}, error)
+{{- end }}
+{{- if .Entity.Has "update" }}
+	Update(ctx context.Context, id {{ .Entity.IDGo }}, request *dto.Update{{ .Entity.Name }}Request) (*dto.{{ .Entity.Name }}, error)
+{{- end }}
+{{- if .Entity.Has "delete" }}
+	// Delete soft-deletes the row and returns it as it was before deletion.
+	Delete(ctx context.Context, id {{ .Entity.IDGo }}) (*dto.{{ .Entity.Name }}, error)
+{{- end }}
+{{- if .Entity.Has "get" }}
+	GetByID(ctx context.Context, id {{ .Entity.IDGo }}) (*dto.{{ .Entity.Name }}, error)
+{{- end }}
+{{- if .Entity.Loader }}
+	// GetByIDs feeds the dataloader; missing IDs are simply absent from the result.
+	GetByIDs(ctx context.Context, ids []{{ .Entity.IDGo }}) ([]*dto.{{ .Entity.Name }}, error)
+{{- end }}
+{{- if .Entity.Has "list" }}
+	Get(ctx context.Context, queryBuilder *coredto.QueryBuilder) (*dto.{{ .Entity.Plural }}, error)
+{{- end }}
+}
+
+type {{ .Entity.Var }}Service struct {
+	repository repository.{{ .Entity.Name }}Repository
+}
+
+func new{{ .Entity.Name }}Service() {{ .Entity.Name }}Service {
+	return &{{ .Entity.Var }}Service{repository: repository.GetFactory().Get{{ .Entity.Name }}Repository()}
+}
+{{- if .Entity.Has "create" }}
+
+func (s *{{ .Entity.Var }}Service) Create(ctx context.Context, request *dto.Create{{ .Entity.Name }}Request) (*dto.{{ .Entity.Name }}, error) {
+	if err := validator.Validator().Validate(request); err != nil {
+		return nil, errors.NewBadRequestError(err.Error())
+	}
+{{- range .Entity.Enums }}
+	if err := validate{{ $e.Name }}{{ .GoName }}({{ if .Ptr }}request.{{ .GoName }}{{ else }}&request.{{ .GoName }}{{ end }}); err != nil {
+		return nil, err
+	}
+{{- end }}
+
+	{{ .Entity.Var }}, err := mapper.MapCreate{{ .Entity.Name }}DtoToModel(request)
+	if err != nil {
+		return nil, err
+	}
+	created, err := s.repository.Create(ctx, {{ .Entity.Var }})
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Name }}ModelToDto(created)
+}
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+func (s *{{ .Entity.Var }}Service) Update(ctx context.Context, id {{ .Entity.IDGo }}, request *dto.Update{{ .Entity.Name }}Request) (*dto.{{ .Entity.Name }}, error) {
+{{- range .Entity.Enums }}
+	if err := validate{{ $e.Name }}{{ .GoName }}(request.{{ .GoName }}); err != nil {
+		return nil, err
+	}
+{{- end }}
+{{- range .Entity.Fields }}{{ if eq .Type "string" }}
+	if request.{{ .GoName }} != nil && utf8.RuneCountInString(*request.{{ .GoName }}) > {{ .MaxLen }} {
+		return nil, errors.NewBadRequestError("{{ .GQLName }}: longer than {{ .MaxLen }} characters")
+	}
+{{- end }}{{ if and .Required .IsText }}
+	if request.{{ .GoName }} != nil && *request.{{ .GoName }} == "" {
+		return nil, errors.NewBadRequestError("{{ .GQLName }}: cannot be empty")
+	}
+{{- end }}{{ end }}
+
+	existing, err := s.repository.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	{{ .Entity.Var }}, err := mapper.MapUpdate{{ .Entity.Name }}DtoToModel(request, existing)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := s.repository.Update(ctx, {{ .Entity.Var }})
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Name }}ModelToDto(updated)
+}
+{{- end }}
+{{- if .Entity.Has "delete" }}
+
+func (s *{{ .Entity.Var }}Service) Delete(ctx context.Context, id {{ .Entity.IDGo }}) (*dto.{{ .Entity.Name }}, error) {
+	existing, err := s.repository.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.repository.Delete(ctx, id); err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Name }}ModelToDto(existing)
+}
+{{- end }}
+{{- if .Entity.Has "get" }}
+
+func (s *{{ .Entity.Var }}Service) GetByID(ctx context.Context, id {{ .Entity.IDGo }}) (*dto.{{ .Entity.Name }}, error) {
+	{{ .Entity.Var }}, err := s.repository.GetByID(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Name }}ModelToDto({{ .Entity.Var }})
+}
+{{- end }}
+{{- if .Entity.Loader }}
+
+func (s *{{ .Entity.Var }}Service) GetByIDs(ctx context.Context, ids []{{ .Entity.IDGo }}) ([]*dto.{{ .Entity.Name }}, error) {
+	{{ .Entity.PluralVar }}, _, err := s.repository.Get(ctx, rqp.New().AddFilter("id", rqp.IN, ids).SetLimit(len(ids)))
+	if err != nil {
+		return nil, err
+	}
+	result, err := mapper.Map{{ .Entity.Plural }}ModelToDto({{ .Entity.PluralVar }}, len({{ .Entity.PluralVar }}))
+	if err != nil {
+		return nil, err
+	}
+	return result.Data, nil
+}
+{{- end }}
+{{- if .Entity.Has "list" }}
+
+func (s *{{ .Entity.Var }}Service) Get(ctx context.Context, queryBuilder *coredto.QueryBuilder) (*dto.{{ .Entity.Plural }}, error) {
+	if err := validate{{ .Entity.Name }}Query(queryBuilder); err != nil {
+		return nil, err
+	}
+	{{ .Entity.PluralVar }}, totalCount, err := s.repository.Get(ctx, queryBuilder.ToRQP())
+	if err != nil {
+		return nil, err
+	}
+	return mapper.Map{{ .Entity.Plural }}ModelToDto({{ .Entity.PluralVar }}, totalCount)
+}
+
+// validate{{ .Entity.Name }}Query applies the page-size default and cap and the column and
+// operator allow-lists, and rewrites field names to their column names. Field
+// names arrive in camelCase (GraphQL) or snake_case (REST).
+func validate{{ .Entity.Name }}Query(queryBuilder *coredto.QueryBuilder) error {
+	if queryBuilder.Limit < 0 {
+		return errors.NewBadRequestError("page size must be positive")
+	}
+	if queryBuilder.Limit == 0 {
+		queryBuilder.Limit = default{{ .Entity.Name }}PageSize
+	}
+	if queryBuilder.Limit > max{{ .Entity.Name }}PageSize {
+		return errors.NewBadRequestError(fmt.Sprintf("page size %d is above the maximum of %d", queryBuilder.Limit, max{{ .Entity.Name }}PageSize))
+	}
+	if queryBuilder.Offset < 0 {
+		return errors.NewBadRequestError("page number must be at least 1")
+	}
+	for i, filter := range queryBuilder.Filters {
+		column := queryColumn(filter.Field)
+		if !{{ .Entity.Var }}QueryColumns[column] {
+			return errors.NewBadRequestError(fmt.Sprintf("cannot filter on %q", filter.Field))
+		}
+		if !{{ .Entity.Var }}QueryOperators[filter.Operator] {
+			return errors.NewBadRequestError(fmt.Sprintf("unknown filter operator %q", filter.Operator))
+		}
+		if err := validateFilterValue(filter); err != nil {
+			return err
+		}
+		queryBuilder.Filters[i].Field = column
+	}
+	for _, sort := range queryBuilder.Sort {
+		column := queryColumn(sort.SortBy)
+		if !{{ .Entity.Var }}QueryColumns[column] {
+			return errors.NewBadRequestError(fmt.Sprintf("cannot sort on %q", sort.SortBy))
+		}
+		sort.SortBy = column
+	}
+	return nil
+}
+{{- end }}
+{{- range .Entity.Enums }}
+
+func validate{{ $e.Name }}{{ .GoName }}(value *string) error {
+	if value != nil && !{{ $e.Var }}{{ .GoName }}Values[*value] {
+		return errors.NewBadRequestError("{{ .GQLName }}: unknown value " + *value)
+	}
+	return nil
+}
+{{- end }}

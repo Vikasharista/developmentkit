@@ -1,0 +1,143 @@
+package repository
+
+import (
+	"context"
+
+	"{{ .Service.CoreModule }}/database/postgres"
+	"{{ .Service.CoreModule }}/errors"
+	"{{ .Service.CoreModule }}/logger"
+	"{{ .Service.CoreModule }}/transaction"
+	"{{ .Service.CoreModule }}/utility"
+	"{{ .ModuleImport }}/model"
+	rqp "github.com/timsolov/rest-query-parser"
+	"go.uber.org/zap"
+	"gorm.io/gorm"
+)
+
+const table{{ .Entity.Plural }} = "{{ .Table }}"
+
+// {{ .Entity.Var }}ImmutableColumns are never written by Update.
+var {{ .Entity.Var }}ImmutableColumns = []string{"id", "namespace", "created_at", "created_by", "deleted_at", "deleted_by"}
+
+type {{ .Entity.Name }}Repository interface {
+	transaction.Executor
+	Create(ctx context.Context, {{ .Entity.Var }} *model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error)
+	Update(ctx context.Context, {{ .Entity.Var }} *model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error)
+	Delete(ctx context.Context, id {{ .Entity.IDGo }}) error
+	// Get returns one page of live rows in the caller's namespace and the total count.
+	Get(ctx context.Context, query *rqp.Query) ([]*model.{{ .Entity.Name }}, int, error)
+	GetByID(ctx context.Context, id {{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error)
+}
+
+type {{ .Entity.Var }}Repository struct {
+	logger *zap.Logger
+	*transaction.GormExecutor
+}
+
+func new{{ .Entity.Name }}Repository() {{ .Entity.Name }}Repository {
+	return &{{ .Entity.Var }}Repository{
+		logger:       logger.GetLogger(),
+		GormExecutor: transaction.NewGormExecutor(postgres.GetDatabase()),
+	}
+}
+
+func (r *{{ .Entity.Var }}Repository) Create(ctx context.Context, {{ .Entity.Var }} *model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error) {
+	if err := r.GetDB(ctx).Table(table{{ .Entity.Plural }}).Create({{ .Entity.Var }}).Error; err != nil {
+		r.logger.With(zap.Any("{{ .Entity.Snake }}", {{ .Entity.Var }}), zap.Error(err)).Error("{{ .LogPrefix }}.Repository.Create.Error")
+		return nil, errors.RepositoryError(err)
+	}
+	// Re-read so database defaults and timestamps come back to the caller.
+	return r.GetByID(ctx, {{ .Entity.Var }}.ID)
+}
+
+// Update writes every mutable column. {{ if .Entity.Versioned }}The row must still be at the version that
+// was read, so a concurrent writer surfaces as DUPLICATE_REQUEST instead of a lost update.{{ else }}A row
+// deleted in the meantime surfaces as RECORD_NOT_FOUND.{{ end }}
+func (r *{{ .Entity.Var }}Repository) Update(ctx context.Context, {{ .Entity.Var }} *model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error) {
+	statement := r.GetDB(ctx).Table(table{{ .Entity.Plural }}).Model({{ .Entity.Var }}).
+		Select("*").Omit({{ .Entity.Var }}ImmutableColumns...).
+		Where("deleted_at IS NULL")
+{{- if .Entity.Versioned }}
+	statement = statement.Where("version = ?", {{ .Entity.Var }}.Version)
+{{- end }}
+
+	result := statement.Updates({{ .Entity.Var }})
+	if result.Error != nil {
+		r.logger.With(zap.Any("id", {{ .Entity.Var }}.ID), zap.Error(result.Error)).Error("{{ .LogPrefix }}.Repository.Update.Error")
+		return nil, errors.RepositoryError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+{{- if .Entity.Versioned }}
+		return nil, errors.NewDuplicateRequestError("{{ .Entity.Snake }} was changed or deleted by someone else; reload and retry")
+{{- else }}
+		return nil, errors.NewRecordNotFoundError("{{ .Entity.Snake }} not found")
+{{- end }}
+	}
+	return r.GetByID(ctx, {{ .Entity.Var }}.ID)
+}
+
+// Delete soft-deletes the row; core-lib stamps deleted_at and deleted_by.
+func (r *{{ .Entity.Var }}Repository) Delete(ctx context.Context, id {{ .Entity.IDGo }}) error {
+	namespace, err := utility.GetNamespaceID(ctx)
+	if err != nil {
+		return err
+	}
+
+	result := r.GetDB(ctx).Table(table{{ .Entity.Plural }}).
+		Where("id = ? AND namespace = ? AND deleted_at IS NULL", id, namespace).
+		Delete(&model.{{ .Entity.Name }}{})
+	if result.Error != nil {
+		r.logger.With(zap.Any("id", id), zap.Error(result.Error)).Error("{{ .LogPrefix }}.Repository.Delete.Error")
+		return errors.RepositoryError(result.Error)
+	}
+	if result.RowsAffected == 0 {
+		return errors.NewRecordNotFoundError("{{ .Entity.Snake }} not found")
+	}
+	return nil
+}
+
+func (r *{{ .Entity.Var }}Repository) Get(ctx context.Context, query *rqp.Query) ([]*model.{{ .Entity.Name }}, int, error) {
+	query, err := utility.AppendNamespaceFilterToQuery(ctx, query)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// A new session, so the count and the page query do not share builder state.
+	statement := r.GetDB(ctx).Table(table{{ .Entity.Plural }}).
+		Where(query.Where(), query.Args()...).
+		Where("deleted_at IS NULL").
+		Session(&gorm.Session{})
+
+	var totalCount int64
+	if err := statement.Count(&totalCount).Error; err != nil {
+		r.logger.With(zap.Any("query", query), zap.Error(err)).Error("{{ .LogPrefix }}.Repository.Get.Count.Error")
+		return nil, 0, errors.RepositoryError(err)
+	}
+
+	order := query.Order()
+	if order == "" {
+		order = "created_at DESC, id"
+	}
+	page := statement.Order(order).Offset(query.Offset)
+	if query.Limit > 0 {
+		page = page.Limit(query.Limit)
+	}
+
+	var {{ .Entity.PluralVar }} []*model.{{ .Entity.Name }}
+	if err := page.Find(&{{ .Entity.PluralVar }}).Error; err != nil {
+		r.logger.With(zap.Any("query", query), zap.Error(err)).Error("{{ .LogPrefix }}.Repository.Get.Error")
+		return nil, 0, errors.RepositoryError(err)
+	}
+	return {{ .Entity.PluralVar }}, int(totalCount), nil
+}
+
+func (r *{{ .Entity.Var }}Repository) GetByID(ctx context.Context, id {{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error) {
+	{{ .Entity.PluralVar }}, _, err := r.Get(ctx, rqp.New().AddFilter("id", rqp.EQ, id).SetLimit(1))
+	if err != nil {
+		return nil, err
+	}
+	if len({{ .Entity.PluralVar }}) == 0 {
+		return nil, errors.NewRecordNotFoundError("{{ .Entity.Snake }} not found")
+	}
+	return {{ .Entity.PluralVar }}[0], nil
+}

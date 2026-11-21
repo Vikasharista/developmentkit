@@ -1,0 +1,13 @@
+package dto
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func Test{{ .Entity.Name }}Key(t *testing.T) {
+	var missing *{{ .Entity.Name }}
+	require.Zero(t, missing.Key())
+	require.Equal(t, {{ .Entity.IDSample }}, (&{{ .Entity.Name }}{ID: {{ .Entity.IDSample }}}).Key())
+}

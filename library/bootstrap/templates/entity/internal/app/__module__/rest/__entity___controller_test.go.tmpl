@@ -1,0 +1,154 @@
+{{- if .Module.REST -}}
+package rest
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+{{- if .Entity.Has "list" }}
+	coredto "{{ .Service.CoreModule }}/dto"
+{{- end }}
+	coreerrors "{{ .Service.CoreModule }}/errors"
+	"{{ .ModuleImport }}/auth"
+	"{{ .ModuleImport }}/dto"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+// stub{{ .Entity.Name }}Service returns result and err from every method and records the last list query.
+type stub{{ .Entity.Name }}Service struct {
+	result *dto.{{ .Entity.Name }}
+	err    error
+{{- if .Entity.Has "list" }}
+	query  *coredto.QueryBuilder
+{{- end }}
+}
+{{- if .Entity.Has "create" }}
+
+func (s *stub{{ .Entity.Name }}Service) Create(context.Context, *dto.Create{{ .Entity.Name }}Request) (*dto.{{ .Entity.Name }}, error) {
+	return s.result, s.err
+}
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+func (s *stub{{ .Entity.Name }}Service) Update(context.Context, {{ .Entity.IDGo }}, *dto.Update{{ .Entity.Name }}Request) (*dto.{{ .Entity.Name }}, error) {
+	return s.result, s.err
+}
+{{- end }}
+{{- if .Entity.Has "delete" }}
+
+func (s *stub{{ .Entity.Name }}Service) Delete(context.Context, {{ .Entity.IDGo }}) (*dto.{{ .Entity.Name }}, error) {
+	return s.result, s.err
+}
+{{- end }}
+{{- if .Entity.Has "get" }}
+
+func (s *stub{{ .Entity.Name }}Service) GetByID(context.Context, {{ .Entity.IDGo }}) (*dto.{{ .Entity.Name }}, error) {
+	return s.result, s.err
+}
+{{- end }}
+{{- if .Entity.Loader }}
+
+func (s *stub{{ .Entity.Name }}Service) GetByIDs(context.Context, []{{ .Entity.IDGo }}) ([]*dto.{{ .Entity.Name }}, error) {
+	return []*dto.{{ .Entity.Name }}{s.result}, s.err
+}
+{{- end }}
+{{- if .Entity.Has "list" }}
+
+func (s *stub{{ .Entity.Name }}Service) Get(_ context.Context, query *coredto.QueryBuilder) (*dto.{{ .Entity.Plural }}, error) {
+	s.query = query
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &dto.{{ .Entity.Plural }}{Data: []*dto.{{ .Entity.Name }}{s.result}, TotalCount: 1}, nil
+}
+{{- end }}
+
+func serve{{ .Entity.Name }}(t *testing.T, svc *stub{{ .Entity.Name }}Service, method, path, body string) *httptest.ResponseRecorder {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	register{{ .Entity.Name }}Routes(router.Group("/v1"), auth.PassThrough(), new{{ .Entity.Name }}Controller(svc))
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(method, "/v1/{{ .Entity.PluralKebab }}"+path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func Test{{ .Entity.Name }}Controller(t *testing.T) {
+	ok := func() *stub{{ .Entity.Name }}Service {
+		return &stub{{ .Entity.Name }}Service{result: &dto.{{ .Entity.Name }}{ID: {{ .Entity.IDSample }}}}
+	}
+	failing := func() *stub{{ .Entity.Name }}Service {
+		return &stub{{ .Entity.Name }}Service{err: coreerrors.NewRecordNotFoundError("missing")}
+	}
+	id := "/{{ if eq .Entity.IDType "int" }}987654{{ else }}00000000-0000-0000-0000-000000000000{{ end }}"
+
+	cases := []struct {
+		name         string
+		svc          *stub{{ .Entity.Name }}Service
+		method, path string
+		body         string
+		want         int
+	}{
+{{- if .Entity.Has "list" }}
+		{"list", ok(), http.MethodGet, "?page=2&size=5&sort=-createdAt,id&isActive=true", "", http.StatusOK},
+		{"list service error", failing(), http.MethodGet, "", "", http.StatusNotFound},
+		{"list bad page", ok(), http.MethodGet, "?page=0", "", http.StatusBadRequest},
+		{"list bad size", ok(), http.MethodGet, "?size=x", "", http.StatusBadRequest},
+{{- end }}
+{{- if .Entity.Has "get" }}
+		{"get", ok(), http.MethodGet, id, "", http.StatusOK},
+		{"get service error", failing(), http.MethodGet, id, "", http.StatusNotFound},
+{{- if eq .Entity.IDType "int" }}
+		{"get bad id", ok(), http.MethodGet, "/abc", "", http.StatusBadRequest},
+{{- end }}
+{{- end }}
+{{- if .Entity.Has "create" }}
+		{"create", ok(), http.MethodPost, "", "{}", http.StatusCreated},
+		{"create service error", failing(), http.MethodPost, "", "{}", http.StatusNotFound},
+		{"create bad body", ok(), http.MethodPost, "", "{", http.StatusBadRequest},
+{{- end }}
+{{- if .Entity.Has "update" }}
+		{"update", ok(), http.MethodPatch, id, "{}", http.StatusOK},
+		{"update service error", failing(), http.MethodPatch, id, "{}", http.StatusNotFound},
+		{"update bad body", ok(), http.MethodPatch, id, "{", http.StatusBadRequest},
+{{- if eq .Entity.IDType "int" }}
+		{"update bad id", ok(), http.MethodPatch, "/abc", "{}", http.StatusBadRequest},
+{{- end }}
+{{- end }}
+{{- if .Entity.Has "delete" }}
+		{"delete", ok(), http.MethodDelete, id, "", http.StatusOK},
+		{"delete service error", failing(), http.MethodDelete, id, "", http.StatusNotFound},
+{{- if eq .Entity.IDType "int" }}
+		{"delete bad id", ok(), http.MethodDelete, "/abc", "", http.StatusBadRequest},
+{{- end }}
+{{- end }}
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			recorder := serve{{ .Entity.Name }}(t, tc.svc, tc.method, tc.path, tc.body)
+			require.Equal(t, tc.want, recorder.Code, recorder.Body.String())
+		})
+	}
+{{- if .Entity.Has "list" }}
+
+	svc := ok()
+	serve{{ .Entity.Name }}(t, svc, http.MethodGet, "?page=2&size=5&sort=-createdAt,id&isActive=true", "")
+	require.Equal(t, 5, svc.query.Limit)
+	require.Equal(t, 5, svc.query.Offset)
+	require.Equal(t, []*coredto.Sort{
+		{SortBy: "createdAt", Order: coredto.DESC},
+		{SortBy: "id", Order: coredto.ASC},
+	}, svc.query.Sort)
+	require.Equal(t, []coredto.Filter{
+		{Field: "isActive", Operator: "EQ", Value: "true"},
+	}, svc.query.Filters)
+{{- end }}
+}
+{{- end }}

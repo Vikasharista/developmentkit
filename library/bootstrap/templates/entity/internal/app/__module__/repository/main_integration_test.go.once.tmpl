@@ -1,0 +1,13 @@
+{{- if or (eq "repository" "repository") (and (eq "repository" "graphql") .Module.GraphQL) (and (eq "repository" "rest") .Module.REST) -}}
+//go:build integration
+
+package repository
+
+import (
+	"testing"
+
+	"{{ .Service.ModulePath }}/internal/testutil/pgtest"
+)
+
+func TestMain(m *testing.M) { pgtest.Main(m) }
+{{- end }}

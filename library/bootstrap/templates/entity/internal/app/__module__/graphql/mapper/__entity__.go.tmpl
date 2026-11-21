@@ -1,0 +1,55 @@
+{{- if .Module.GraphQL -}}
+package mapper
+
+import (
+	"{{ .Service.CoreModule }}/logger"
+	"{{ .ModuleImport }}/dto"
+	"{{ .ModuleImport }}/graphql/generated"
+	"go.uber.org/zap"
+)
+{{- if .Entity.Has "create" }}
+
+func MapCreate{{ .Entity.Name }}InputToDto(input *generated.Create{{ .Entity.Name }}Input) (*dto.Create{{ .Entity.Name }}Request, error) {
+	request := &dto.Create{{ .Entity.Name }}Request{}
+	if err := CopyWithOption(request, input, copyIgnoringEmpty); err != nil {
+		logger.GetLogger().With(zap.Error(err)).Error("{{ .LogPrefix }}.GraphqlMapper.MapCreate{{ .Entity.Name }}InputToDto.Error")
+		return nil, err
+	}
+	return request, nil
+}
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+func MapUpdate{{ .Entity.Name }}InputToDto(input *generated.Update{{ .Entity.Name }}Input) (*dto.Update{{ .Entity.Name }}Request, error) {
+	request := &dto.Update{{ .Entity.Name }}Request{}
+	if err := CopyWithOption(request, input, copyIgnoringEmpty); err != nil {
+		logger.GetLogger().With(zap.Error(err)).Error("{{ .LogPrefix }}.GraphqlMapper.MapUpdate{{ .Entity.Name }}InputToDto.Error")
+		return nil, err
+	}
+	return request, nil
+}
+{{- end }}
+
+func Map{{ .Entity.Name }}ToGraphqlModel({{ .Entity.Var }} *dto.{{ .Entity.Name }}) (*generated.{{ .Entity.Name }}, error) {
+	result := &generated.{{ .Entity.Name }}{}
+	if err := CopyWithOption(result, {{ .Entity.Var }}, copyIgnoringEmpty); err != nil {
+		logger.GetLogger().With(zap.Error(err)).Error("{{ .LogPrefix }}.GraphqlMapper.Map{{ .Entity.Name }}ToGraphqlModel.Error")
+		return nil, err
+	}
+	return result, nil
+}
+{{- if .Entity.Has "list" }}
+
+func Map{{ .Entity.Plural }}ToGraphqlModel({{ .Entity.PluralVar }} *dto.{{ .Entity.Plural }}) (*generated.{{ .Entity.Plural }}, error) {
+	result := &generated.{{ .Entity.Plural }}{Data: make([]*generated.{{ .Entity.Name }}, 0, len({{ .Entity.PluralVar }}.Data)), TotalCount: {{ .Entity.PluralVar }}.TotalCount}
+	for _, {{ .Entity.Var }} := range {{ .Entity.PluralVar }}.Data {
+		mapped, err := Map{{ .Entity.Name }}ToGraphqlModel({{ .Entity.Var }})
+		if err != nil {
+			return nil, err
+		}
+		result.Data = append(result.Data, mapped)
+	}
+	return result, nil
+}
+{{- end }}
+{{- end }}

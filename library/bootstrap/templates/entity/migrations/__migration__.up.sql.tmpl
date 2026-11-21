@@ -1,0 +1,56 @@
+-- {{ .Entity.Plural }}{{ if .Entity.Description }}: {{ .Entity.Description }}{{ end }}
+-- Conventions: varchar(64) or serial id, namespace tenant column, core-lib audit
+-- columns, soft delete, indexes that lead with namespace and skip deleted rows,
+-- and the shared log_audit trigger. golang-migrate runs this file in one transaction.
+-- CREATE TABLE has no IF NOT EXISTS on purpose: if the table already exists this
+-- migration must fail, not adopt it (its down migration would then drop it).
+{{- $s := . }}
+{{- if ne .Module.PgSchema "public" }}
+
+CREATE SCHEMA IF NOT EXISTS {{ .Module.PgSchema }};
+{{- end }}
+
+CREATE TABLE {{ .Table }} (
+    id          {{ if eq .Entity.IDType "int" }}serial{{ else }}varchar(64){{ end }} NOT NULL,
+    namespace   varchar(32) NOT NULL,
+{{- range .Entity.Fields }}
+    {{ printf "%-11s" .Name }} {{ .SQLType }}{{ if not .Nullable }} NOT NULL{{ end }}{{ if .Default }} DEFAULT {{ .Default }}{{ end }}{{ if eq .Type "enum" }}
+        CONSTRAINT chk_{{ $s.Entity.Table }}_{{ .Name }} CHECK ({{ .Name }} IN ({{ sqlList .Enum }})){{ end }}{{ if eq .Type "ref" }}
+        CONSTRAINT fk_{{ $s.Entity.Table }}_{{ .Name }} REFERENCES {{ .Ref }} (id){{ end }},
+{{- end }}
+    is_active   boolean NOT NULL DEFAULT true,
+{{- if .Entity.Versioned }}
+    version     int NOT NULL DEFAULT 1,
+{{- end }}
+    created_by  varchar(64) NOT NULL,
+    updated_by  varchar(64),
+    deleted_by  varchar(64),
+    created_at  timestamptz NOT NULL DEFAULT now(),
+    updated_at  timestamptz,
+    deleted_at  timestamptz,
+    PRIMARY KEY (id)
+);
+{{- if .Entity.Description }}
+
+COMMENT ON TABLE {{ .Table }} IS {{ sqlquote .Entity.Description }};
+{{- end }}
+{{- range .Entity.Fields }}{{ if .Comment }}
+COMMENT ON COLUMN {{ $s.Table }}.{{ .Name }} IS {{ sqlquote .Comment }};
+{{- end }}{{ end }}
+
+CREATE INDEX IF NOT EXISTS {{ .Entity.Table }}_namespace_created_at_idx
+    ON {{ .Table }} (namespace, created_at DESC) WHERE deleted_at IS NULL;
+{{- range .Entity.Fields }}
+{{- if .Unique }}
+CREATE UNIQUE INDEX IF NOT EXISTS {{ $s.Entity.Table }}_namespace_{{ .Name }}_uidx
+    ON {{ $s.Table }} (namespace, {{ .Name }}) WHERE deleted_at IS NULL;
+{{- else if or .Index (eq .Type "ref") }}
+CREATE INDEX IF NOT EXISTS {{ $s.Entity.Table }}_namespace_{{ .Name }}_idx
+    ON {{ $s.Table }} (namespace, {{ .Name }}) WHERE deleted_at IS NULL;
+{{- end }}
+{{- end }}
+
+DROP TRIGGER IF EXISTS log_audit_trigger ON {{ .Table }};
+CREATE TRIGGER log_audit_trigger
+    AFTER UPDATE OR DELETE ON {{ .Table }}
+    FOR EACH ROW EXECUTE FUNCTION public.log_audit();

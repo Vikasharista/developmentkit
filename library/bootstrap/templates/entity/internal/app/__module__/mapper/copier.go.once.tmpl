@@ -1,0 +1,14 @@
+package mapper
+
+import "github.com/jinzhu/copier"
+
+// CopyWithOption is copier.CopyWithOption. Tests replace it to exercise the
+// copy-failure paths of the mappers and their callers.
+var CopyWithOption = copier.CopyWithOption
+
+var (
+	// copyAll copies every field, used when building a new row.
+	copyAll = copier.Option{DeepCopy: true}
+	// copyIgnoringEmpty skips nil and zero source fields, so a patch keeps stored values.
+	copyIgnoringEmpty = copier.Option{DeepCopy: true, IgnoreEmpty: true}
+)

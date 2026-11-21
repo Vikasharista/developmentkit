@@ -1,0 +1,16 @@
+{
+  "mode": "service",
+  "service": {"name": "logistics-service", "module_path": "bitbucket.org/your-org/logistics-service", "core_module": "bitbucket.org/your-org/core-lib", "db_port": 55441, "port": 8092},
+  "module": {"name": "logistics", "pg_schema": "public", "graphql": true, "rest": false},
+  "entity": {
+    "name": "Port", "plural": "Ports", "table": "ports", "id_type": "int",
+    "versioned": true, "loader": true,
+    "fields": [
+      {"name": "un_locode", "type": "string", "max_len": 5, "unique": true},
+      {"name": "country_code", "type": "string", "max_len": 2, "index": true},
+      {"name": "is_reefer_capable", "type": "bool"},
+      {"name": "berth_count", "type": "int", "nullable": true}
+    ]
+  },
+  "migration": {"number": 2, "description": "ports"}
+}

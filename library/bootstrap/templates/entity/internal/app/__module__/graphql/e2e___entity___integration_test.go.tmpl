@@ -1,0 +1,190 @@
+{{- if .Module.GraphQL -}}
+//go:build integration
+
+package graphql
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+{{- if or .Entity.NeedsFmt .Entity.Loader }}
+	"fmt"
+{{- end }}
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"{{ .ModuleImport }}/graphql/generated"
+	"{{ .Service.ModulePath }}/internal/testutil/pgtest"
+	gqlgraphql "github.com/99designs/gqlgen/graphql"
+	"github.com/stretchr/testify/require"
+)
+
+const {{ .Entity.Var }}Fields = "id isActive createdBy updatedBy createdAt updatedAt{{ if .Entity.Versioned }} version{{ end }}{{ range .Entity.Fields }} {{ .GQLName }}{{ end }}"
+
+type {{ .Entity.Var }}Client struct {
+	t         *testing.T
+	server    *httptest.Server
+	namespace string
+}
+
+func new{{ .Entity.Name }}Client(t *testing.T) *{{ .Entity.Var }}Client {
+	// Directives pass through, so the caller is whoever X-User-Id says.
+	passThrough := func(ctx context.Context, _ interface{}, next gqlgraphql.Resolver) (interface{}, error) { return next(ctx) }
+	server := httptest.NewServer(NewHandler(generated.DirectiveRoot{
+		Authenticate: passThrough,
+{{- if .Entity.UsesPermissions }}
+		HasPermission: func(ctx context.Context, obj interface{}, next gqlgraphql.Resolver, _ string) (interface{}, error) {
+			return next(ctx)
+		},
+{{- end }}
+	}))
+	t.Cleanup(server.Close)
+	return &{{ .Entity.Var }}Client{t: t, server: server, namespace: pgtest.Namespace(t)}
+}
+
+func (c *{{ .Entity.Var }}Client) do(query string, variables map[string]interface{}) gqlResponse {
+	c.t.Helper()
+	body, err := json.Marshal(map[string]interface{}{"query": query, "variables": variables})
+	require.NoError(c.t, err)
+	request, err := http.NewRequest(http.MethodPost, c.server.URL, bytes.NewReader(body))
+	require.NoError(c.t, err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Namespace-Id", c.namespace)
+	request.Header.Set("X-User-Id", pgtest.User)
+
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(c.t, err)
+	defer response.Body.Close()
+	require.Equal(c.t, http.StatusOK, response.StatusCode)
+
+	var out gqlResponse
+	require.NoError(c.t, json.NewDecoder(response.Body).Decode(&out))
+	return out
+}
+
+// ok runs the operation, requires no errors and decodes data[field] into a map.
+func (c *{{ .Entity.Var }}Client) ok(query string, variables map[string]interface{}, field string) map[string]interface{} {
+	c.t.Helper()
+	out := c.do(query, variables)
+	require.Empty(c.t, out.Errors, "unexpected errors for %s", field)
+	var value map[string]interface{}
+	require.NoError(c.t, json.Unmarshal(out.Data[field], &value))
+	return value
+}
+
+// fails runs the operation and requires one error with the given core-lib code.
+func (c *{{ .Entity.Var }}Client) fails(query string, variables map[string]interface{}, code string) {
+	c.t.Helper()
+	out := c.do(query, variables)
+	require.NotEmpty(c.t, out.Errors, "want error %s", code)
+	require.Equal(c.t, code, out.Errors[0].Extensions["code"], out.Errors[0].Message)
+}
+
+func {{ .Entity.Var }}Input(seed int) map[string]interface{} {
+	return map[string]interface{}{
+{{- range .Entity.SampleFields }}
+		"{{ .GQLName }}": {{ .SeedJSONGo }},
+{{- end }}
+	}
+}
+
+func TestE2E{{ .Entity.Name }}GraphQL(t *testing.T) {
+	c := new{{ .Entity.Name }}Client(t)
+{{- if .Entity.Has "create" }}
+
+	createMutation := `mutation($input: Create{{ .Entity.Name }}Input!) { create{{ .Entity.Name }}(input: $input) { ` + {{ .Entity.Var }}Fields + ` } }`
+	input := {{ .Entity.Var }}Input(1)
+	first := c.ok(createMutation, map[string]interface{}{"input": input}, "create{{ .Entity.Name }}")
+	require.NotEmpty(t, first["id"])
+	require.Equal(t, true, first["isActive"])
+	require.Equal(t, pgtest.User, first["createdBy"])
+{{- range .Entity.SampleFields }}{{ if or (eq .Type "string") (eq .Type "text") (eq .Type "enum") }}
+	require.Equal(t, input["{{ .GQLName }}"], first["{{ .GQLName }}"])
+{{- end }}{{ end }}
+	second := c.ok(createMutation, map[string]interface{}{"input": {{ .Entity.Var }}Input(2)}, "create{{ .Entity.Name }}")
+	id := first["id"]
+	_ = second
+{{- range .Entity.UniqueFields }}
+
+	// {{ .GQLName }} is unique per namespace.
+	c.fails(createMutation, map[string]interface{}{"input": {{ $.Entity.Var }}Input(1)}, "DUPLICATE_REQUEST")
+{{- end }}
+{{- range .Entity.Fields }}{{ if and .Required (or (eq .Type "string") (eq .Type "text")) }}
+
+	blank{{ .GoName }} := {{ $.Entity.Var }}Input(9)
+	blank{{ .GoName }}["{{ .GQLName }}"] = ""
+	c.fails(createMutation, map[string]interface{}{"input": blank{{ .GoName }}}, "BAD_REQUEST")
+{{- end }}{{ end }}
+{{- if .Entity.Has "get" }}
+
+	getQuery := `query($id: {{ .Entity.IDGQL }}!) { {{ .Entity.Var }}(id: $id) { ` + {{ .Entity.Var }}Fields + ` } }`
+	got := c.ok(getQuery, map[string]interface{}{"id": id}, "{{ .Entity.Var }}")
+	require.Equal(t, id, got["id"])
+{{- end }}
+{{- if .Entity.Has "list" }}
+
+	listQuery := `query($filters: [Filter!], $page: PageInput!, $sort: [Sort!]) {
+		{{ .Entity.PluralVar }}(filters: $filters, page: $page, sort: $sort) { totalCount data { ` + {{ .Entity.Var }}Fields + ` } }
+	}`
+	all := c.ok(listQuery, map[string]interface{}{
+		"page": map[string]interface{}{"fetchSize": 1, "pageNumber": 1},
+		"sort": []interface{}{map[string]interface{}{"sortBy": "createdAt", "order": "DESC"}},
+	}, "{{ .Entity.PluralVar }}")
+	require.EqualValues(t, 2, all["totalCount"])
+	require.Len(t, all["data"], 1)
+
+	byID := c.ok(listQuery, map[string]interface{}{
+		"page":    map[string]interface{}{"fetchSize": 10, "pageNumber": 1},
+		"filters": []interface{}{map[string]interface{}{"field": "id", "operator": "EQ", "value": id}},
+	}, "{{ .Entity.PluralVar }}")
+	require.EqualValues(t, 1, byID["totalCount"])
+
+	c.fails(listQuery, map[string]interface{}{
+		"page":    map[string]interface{}{"fetchSize": 10, "pageNumber": 1},
+		"filters": []interface{}{map[string]interface{}{"field": "deletedBy", "value": "x"}},
+	}, "BAD_REQUEST")
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+	updateMutation := `mutation($id: {{ .Entity.IDGQL }}!, $input: Update{{ .Entity.Name }}Input!) { update{{ .Entity.Name }}(id: $id, input: $input) { ` + {{ .Entity.Var }}Fields + ` } }`
+	updated := c.ok(updateMutation, map[string]interface{}{"id": id, "input": map[string]interface{}{"isActive": false}}, "update{{ .Entity.Name }}")
+	require.Equal(t, false, updated["isActive"])
+	require.Equal(t, pgtest.User, updated["updatedBy"])
+{{- if .Entity.Versioned }}
+	require.EqualValues(t, 2, updated["version"])
+
+	// A writer still holding version 1 is refused instead of overwriting.
+	c.fails(updateMutation, map[string]interface{}{"id": id, "input": map[string]interface{}{"isActive": true, "version": 1}}, "DUPLICATE_REQUEST")
+{{- end }}
+{{- range .Entity.SampleFields }}{{ if or (eq .Type "string") (eq .Type "text") (eq .Type "enum") }}
+	require.Equal(t, first["{{ .GQLName }}"], updated["{{ .GQLName }}"], "unset patch fields keep their value")
+{{- end }}{{ end }}
+{{- end }}
+{{- if .Entity.Loader }}
+
+	// Federation: the router resolves references through _entities and the dataloader.
+	entitiesQuery := `query($representations: [_Any!]!) { _entities(representations: $representations) { ... on {{ .Entity.Name }} { id } } }`
+	entities := c.do(entitiesQuery, map[string]interface{}{"representations": []interface{}{
+		map[string]interface{}{"__typename": "{{ .Entity.Name }}", "id": id},
+	}})
+	require.Empty(t, entities.Errors)
+	require.Contains(t, string(entities.Data["_entities"]), fmt.Sprint(id))
+	missing := c.do(entitiesQuery, map[string]interface{}{"representations": []interface{}{
+		map[string]interface{}{"__typename": "{{ .Entity.Name }}", "id": {{ .Entity.IDSample }}},
+	}})
+	require.NotEmpty(t, missing.Errors)
+{{- end }}
+{{- if .Entity.Has "delete" }}
+
+	deleteMutation := `mutation($id: {{ .Entity.IDGQL }}!) { delete{{ .Entity.Name }}(id: $id) { id } }`
+	deleted := c.ok(deleteMutation, map[string]interface{}{"id": id}, "delete{{ .Entity.Name }}")
+	require.Equal(t, id, deleted["id"])
+	c.fails(deleteMutation, map[string]interface{}{"id": id}, "RECORD_NOT_FOUND")
+{{- if .Entity.Has "get" }}
+	c.fails(getQuery, map[string]interface{}{"id": id}, "RECORD_NOT_FOUND")
+{{- end }}
+{{- end }}
+{{- end }}
+}
+{{- end }}

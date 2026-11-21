@@ -1,0 +1,91 @@
+package mapper
+
+import (
+	"errors"
+{{- if .Entity.NeedsFmt }}
+	"fmt"
+{{- end }}
+	"testing"
+{{- if .Entity.NeedsTime }}
+	"time"
+{{- end }}
+
+	"{{ .Service.CoreModule }}/logger"
+{{- if .Entity.HasType "jsonb" }}
+	coremodel "{{ .Service.CoreModule }}/model"
+{{- end }}
+{{- if .Entity.NeedsUtility }}
+	"{{ .Service.CoreModule }}/utility"
+{{- end }}
+	"{{ .ModuleImport }}/dto"
+	"{{ .ModuleImport }}/model"
+	"github.com/jinzhu/copier"
+	"github.com/stretchr/testify/require"
+)
+
+func init() { _, _ = logger.Init(0) }
+
+func failing{{ .Entity.Name }}Copy(t *testing.T) {
+	previous := CopyWithOption
+	t.Cleanup(func() { CopyWithOption = previous })
+	CopyWithOption = func(interface{}, interface{}, copier.Option) error { return errors.New("copy failed") }
+}
+
+func Test{{ .Entity.Name }}Mappers(t *testing.T) {
+	seed := 1
+	request := &dto.Create{{ .Entity.Name }}Request{
+{{- range .Entity.SampleFields }}
+		{{ .GoName }}: {{ .SeedCreateGo }},
+{{- end }}
+	}
+
+	row, err := MapCreate{{ .Entity.Name }}DtoToModel(request)
+	require.NoError(t, err)
+{{- range .Entity.SampleFields }}
+	require.Equal(t, {{ if eq .Type "jsonb" }}coremodel.Map(request.{{ .GoName }}){{ else if .CreatePtr }}*request.{{ .GoName }}{{ else }}request.{{ .GoName }}{{ end }}, row.{{ .GoName }})
+{{- end }}
+
+	row.ID = {{ if eq .Entity.IDType "int" }}42{{ else }}"id-42"{{ end }}
+	active := true
+	row.IsActive = &active
+	row.CreatedBy = "creator"
+
+	inactive := false
+	patched, err := MapUpdate{{ .Entity.Name }}DtoToModel(&dto.Update{{ .Entity.Name }}Request{IsActive: &inactive}, row)
+	require.NoError(t, err)
+	require.False(t, *patched.IsActive)
+{{- range .Entity.SampleFields }}
+	require.Equal(t, {{ if eq .Type "jsonb" }}coremodel.Map(request.{{ .GoName }}){{ else if .CreatePtr }}*request.{{ .GoName }}{{ else }}request.{{ .GoName }}{{ end }}, patched.{{ .GoName }}, "unset patch fields keep their value")
+{{- end }}
+
+	mapped, err := Map{{ .Entity.Name }}ModelToDto(patched)
+	require.NoError(t, err)
+	require.Equal(t, row.ID, mapped.ID)
+	require.Equal(t, "creator", mapped.CreatedBy)
+	require.False(t, mapped.IsActive)
+{{- range .Entity.SampleFields }}
+	require.Equal(t, {{ if .CreatePtr }}*request.{{ .GoName }}{{ else }}request.{{ .GoName }}{{ end }}, mapped.{{ .GoName }})
+{{- end }}
+
+	page, err := Map{{ .Entity.Plural }}ModelToDto([]*model.{{ .Entity.Name }}{row, row}, 9)
+	require.NoError(t, err)
+	require.Equal(t, 9, page.TotalCount)
+	require.Len(t, page.Data, 2)
+
+	empty, err := Map{{ .Entity.Plural }}ModelToDto(nil, 0)
+	require.NoError(t, err)
+	require.NotNil(t, empty.Data, "an empty page serialises as [] not null")
+}
+
+func Test{{ .Entity.Name }}Mappers_CopyFailure(t *testing.T) {
+	failing{{ .Entity.Name }}Copy(t)
+
+	_, err := MapCreate{{ .Entity.Name }}DtoToModel(&dto.Create{{ .Entity.Name }}Request{})
+	require.Error(t, err)
+	_, err = MapUpdate{{ .Entity.Name }}DtoToModel(&dto.Update{{ .Entity.Name }}Request{}, &model.{{ .Entity.Name }}{})
+	require.Error(t, err)
+	_, err = Map{{ .Entity.Name }}ModelToDto(&model.{{ .Entity.Name }}{})
+	require.Error(t, err)
+	_, err = Map{{ .Entity.Plural }}ModelToDto([]*model.{{ .Entity.Name }}{ {} }, 1)
+	require.Error(t, err)
+}

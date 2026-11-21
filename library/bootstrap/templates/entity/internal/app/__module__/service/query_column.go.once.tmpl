@@ -1,0 +1,55 @@
+package service
+
+import (
+	"fmt"
+	"strings"
+	"unicode"
+
+	coredto "{{ .Service.CoreModule }}/dto"
+	"{{ .Service.CoreModule }}/errors"
+)
+
+// queryColumn turns a list filter or sort field (camelCase from GraphQL, snake_case
+// from REST) into its column name. It does not rely on core-lib's ToSnakeCase, which
+// in v0.2.0 returns the input lower-cased without inserting underscores.
+func queryColumn(field string) string {
+	var b strings.Builder
+	runes := []rune(strings.TrimSpace(field))
+	for i, r := range runes {
+		if unicode.IsUpper(r) {
+			if i > 0 && startsWord(runes, i) {
+				b.WriteByte('_')
+			}
+			b.WriteRune(unicode.ToLower(r))
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// startsWord reports whether the upper-case rune at i begins a new word: after a
+// lower-case letter or digit (skuCode), or ending an initialism (HTTPServer).
+func startsWord(runes []rune, i int) bool {
+	previous := runes[i-1]
+	if unicode.IsLower(previous) || unicode.IsDigit(previous) {
+		return true
+	}
+	return unicode.IsUpper(previous) && i+1 < len(runes) && unicode.IsLower(runes[i+1])
+}
+
+// validateFilterValue rejects values the query parser cannot use: LIKE and ILIKE need
+// a string, IN and NIN a non-empty list.
+func validateFilterValue(filter coredto.Filter) error {
+	switch filter.Operator {
+	case "LIKE", "ILIKE":
+		if _, ok := filter.Value.(string); !ok {
+			return errors.NewBadRequestError(fmt.Sprintf("%s on %q needs a string value", filter.Operator, filter.Field))
+		}
+	case "IN", "NIN":
+		if values, ok := filter.Value.([]interface{}); !ok || len(values) == 0 {
+			return errors.NewBadRequestError(fmt.Sprintf("%s on %q needs a non-empty list", filter.Operator, filter.Field))
+		}
+	}
+	return nil
+}

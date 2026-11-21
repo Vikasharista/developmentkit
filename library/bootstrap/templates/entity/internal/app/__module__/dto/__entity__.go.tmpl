@@ -1,0 +1,55 @@
+package dto
+
+import "time"
+
+// {{ .Entity.Plural }} is one page of {{ .Entity.Var }}s plus the total across all pages.
+type {{ .Entity.Plural }} struct {
+	Data       []*{{ .Entity.Name }} `json:"data"`
+	TotalCount int `json:"totalCount"`
+}
+
+type {{ .Entity.Name }} struct {
+	ID {{ .Entity.IDGo }} `json:"id"`
+{{- range .Entity.Fields }}
+	{{ .GoName }} {{ .DTOType }} `json:"{{ .GQLName }}{{ if .Nullable }},omitempty{{ end }}"`
+{{- end }}
+	IsActive  bool      `json:"isActive"`
+{{- if .Entity.Versioned }}
+	Version   int       `json:"version"`
+{{- end }}
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+	CreatedBy string    `json:"createdBy"`
+	UpdatedBy string    `json:"updatedBy"`
+}
+
+// Key lets the core-lib dataloader match results to requested IDs.
+func ({{ .Entity.Var }} *{{ .Entity.Name }}) Key() {{ .Entity.IDGo }} {
+	if {{ .Entity.Var }} == nil {
+		return {{ if eq .Entity.IDType "int" }}0{{ else }}""{{ end }}
+	}
+	return {{ .Entity.Var }}.ID
+}
+
+// Create{{ .Entity.Name }}Request carries required numbers, booleans and times as
+// pointers so a missing value is rejected rather than stored as zero.
+type Create{{ .Entity.Name }}Request struct {
+{{- range .Entity.Fields }}
+	{{ .GoName }} {{ .CreateType }} `json:"{{ .GQLName }}"{{ .ValidateTag }}`
+{{- end }}
+	IsActive *bool `json:"isActive"`
+}
+
+// Update{{ .Entity.Name }}Request is a patch: nil fields keep their stored value, so a
+// nullable column cannot be cleared through it.
+type Update{{ .Entity.Name }}Request struct {
+{{- range .Entity.Fields }}
+	{{ .GoName }} {{ .PatchType }} `json:"{{ .GQLName }}"`
+{{- end }}
+	IsActive *bool `json:"isActive"`
+{{- if .Entity.Versioned }}
+	// Version is the version the caller read. When set, the update fails with
+	// DUPLICATE_REQUEST if the row has changed since.
+	Version *int `json:"version"`
+{{- end }}
+}

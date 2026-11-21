@@ -1,0 +1,18 @@
+{{- if and .Module.GraphQL .Entity.Loader -}}
+package loader
+
+import (
+	"context"
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestWithLoader(t *testing.T) {
+	ctx := WithLoader(context.Background())
+	loaders := GetLoader(ctx)
+	require.NotNil(t, loaders)
+	require.NotNil(t, loaders.{{ .Entity.Name }}Loader)
+	require.NotSame(t, loaders, GetLoader(WithLoader(context.Background())), "each request gets its own loaders")
+}
+{{- end }}

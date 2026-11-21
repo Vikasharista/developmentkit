@@ -1,0 +1,27 @@
+package service
+
+import "sync"
+
+var (
+	serviceFactory *factory
+	serviceSync    sync.Once
+)
+
+// factory hands out one lazily built instance of each service.
+type factory struct {
+	{{ .Entity.Var }}Service     {{ .Entity.Name }}Service
+	{{ .Entity.Var }}ServiceSync sync.Once
+	// bootstrap:service-fields
+}
+
+func GetFactory() *factory {
+	serviceSync.Do(func() { serviceFactory = &factory{} })
+	return serviceFactory
+}
+
+func (f *factory) Get{{ .Entity.Name }}Service() {{ .Entity.Name }}Service {
+	f.{{ .Entity.Var }}ServiceSync.Do(func() { f.{{ .Entity.Var }}Service = new{{ .Entity.Name }}Service() })
+	return f.{{ .Entity.Var }}Service
+}
+
+// bootstrap:service-getters

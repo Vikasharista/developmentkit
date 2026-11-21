@@ -1,0 +1,41 @@
+# Architecture
+
+## Process
+
+One binary (`server.go`) with core-lib's cobra root:
+
+- `./app serve`: connect Postgres, build the gin router (`internal/server.go`), serve on `server.port`.
+- `./app migrate up [n]` / `./app migrate down [n]`: golang-migrate over `./migrations`. Deployments
+  run `migrate up` as a separate job before rolling the pods; `serve` never migrates.
+
+Routes are mounted twice, at `/` and under `{{ .Service.RoutePrefix }}`, so the service works behind a
+gateway that strips the prefix and one that keeps it. `/livez` answers while the process runs; `/healthz`
+also pings Postgres.
+
+## Request flow
+
+```
+HTTP ─▶ gin ─▶ module handler
+              ├─ GraphQL: EnrichContext (headers → ctx) ─▶ loaders ─▶ @authenticate / @hasPermission ─▶ resolver
+              └─ REST:    EnrichContext ─▶ auth.Gin (same directive functions) ─▶ controller
+                                                       │
+                                                       ▼
+                                   service: validation, allow-lists, business rules
+                                                       │  mapper (copier)
+                                                       ▼
+                                   repository: namespace filter, soft delete, SQL via GORM
+                                                       ▼
+                                                  Postgres ─▶ log_audit trigger ─▶ audit.audit_logs
+```
+
+## Building blocks
+
+| Concern | Where | Notes |
+|---|---|---|
+| Config | core-lib `config.Viper` | `config/default.yaml` + override file + `APP_*` env vars |
+| Auth | `internal/app/<module>/auth` | core-lib `authdirective`; REST reuses the directive functions |
+| Tenancy | core-lib base model hooks + `AppendNamespaceFilterToQuery` | `X-Namespace-Id` header |
+| Audit | core-lib base model (`created_by` …) + `log_audit` trigger | `audit.audit_logs` |
+| Errors | core-lib `errors` | GraphQL `extensions.code`; REST maps codes to HTTP statuses |
+| DI | `sync.Once` factories per layer | zero-arg constructors |
+| Federation | gqlgen federation v2, one subgraph per module | `@key(fields: "id")` + dataloader-backed entity resolvers |

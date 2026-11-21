@@ -1,0 +1,39 @@
+# Development
+
+## Prerequisites
+
+Go {{ .Service.GoVersion }}, Docker, SSH access to `{{ .Service.CoreModule }}`
+(`export GOPRIVATE={{ .Service.CoreModule }}`), optionally `rover` for `make supergraph`.
+
+## Everyday commands
+
+| Command | Does |
+|---|---|
+| `make setup` | Installs dlv, creates `config/local.yaml` from the example, downloads modules |
+| `make db-up` / `db-down` / `db-reset` | Local Postgres in docker on :{{ .Service.DBPort }} |
+| `make migrate-up` / `migrate-down N=1` | Apply / roll back migrations against `config/local.yaml` |
+| `make migrate-new NAME=add_x` | Next numbered empty migration pair |
+| `make serve` | Run with `config/local.yaml` |
+| `make debug` | Run under dlv on :2345; attach with the "attach to make debug" VS Code config |
+| `make gql MODULE=<module>` | Regenerate one module's GraphQL code |
+| `make test` | Unit tests, no database |
+| `make test-integration` | Unit + integration tests against `{{ .Service.DBName }}_test` |
+| `make e2e` | Only the end-to-end tests (`TestE2E*`): real handlers, real Postgres, every operation over HTTP |
+| `make cover` | Everything, failing below 100% coverage of hand-written code |
+| `make smoke` | Probe a running server |
+
+## Tests
+
+- **Unit** tests sit next to the code and use hand-written stubs of the layer below (no mock generators).
+- **Integration** tests carry `//go:build integration`. Each package's `TestMain` calls
+  `internal/testutil/pgtest`, which migrates `TEST_DATABASE_DSN` once and gives every test its own
+  namespace, so tests never clean up and never collide.
+- **End-to-end** tests (`TestE2E*`) drive the real GraphQL handler or gin routes over HTTP with
+  pass-through auth.
+- **Coverage**: `scripts/coverage.sh` excludes only `graphql/generated` and `internal/testutil`.
+
+## Adding an entity or a module
+
+Use `/devkit:bootstrap`. By hand, the order is: migration → model → DTO → repository →
+service (+ allow-list) → mapper → schema + `make gql` → GraphQL mapper + resolver → REST controller →
+factories → tests at every layer → module README.

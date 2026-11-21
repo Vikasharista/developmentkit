@@ -1,0 +1,8 @@
+## internal/app/{{ .Module.Name }}/README.md
+
+Add {{ .Entity.Name }} to the module's "What This Module Owns", "Public Surface" and "Data And
+Migrations" sections: table `{{ .Table }}` (migration `{{ .MigrationName }}`),
+{{- if .Module.GraphQL }} GraphQL {{ if .Entity.Has "list" }}`{{ .Entity.PluralVar }}`{{ end }}{{ if .Entity.Has "get" }} `{{ .Entity.Var }}`{{ end }}{{ if .Entity.Has "create" }} `create{{ .Entity.Name }}`{{ end }}{{ if .Entity.Has "update" }} `update{{ .Entity.Name }}`{{ end }}{{ if .Entity.Has "delete" }} `delete{{ .Entity.Name }}`{{ end }},{{ end }}
+{{- if .Module.REST }} REST `/{{ .Module.Route }}/v1/{{ .Entity.PluralKebab }}`,{{ end }} and the files under
+`model/`, `dto/`, `repository/`, `service/`, `mapper/` named `{{ .Entity.Snake }}*`.
+Update the repo-level module index (README / AGENTS.md) only if the module's description changed.

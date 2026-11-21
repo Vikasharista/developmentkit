@@ -1,0 +1,77 @@
+{{- if .Module.GraphQL -}}
+## internal/app/{{ .Module.Name }}/graphql/resolver/resolver.go
+
+Add the service to the Resolver struct and to NewResolver:
+
+```go
+{{ .Entity.Name }}Service service.{{ .Entity.Name }}Service
+```
+
+```go
+{{ .Entity.Name }}Service: service.GetFactory().Get{{ .Entity.Name }}Service(),
+```
+
+## internal/app/{{ .Module.Name }}/graphql/schema/directive.graphqls
+
+The new schema uses `@authenticate`{{ if .Entity.UsesPermissions }} and `@hasPermission(permission: String!)`{{ end }}. Declare any that are missing:
+
+```graphql
+directive @authenticate on FIELD_DEFINITION
+{{- if .Entity.UsesPermissions }}
+directive @hasPermission(permission: String!) on FIELD_DEFINITION
+{{- end }}
+```
+
+and wire them in `graphql/init.go` the way the module already wires its directives.
+{{- if .Entity.UsesPermissions }}
+`HasPermission` needs core-lib v0.2.0+ (`authdirective.New`); on older core-lib use
+`directive.VerifyUserPermission(permission)` behind a small adapter.
+{{- end }}
+The generated e2e test (`graphql/e2e_{{ .Entity.Snake }}_integration_test.go`) calls
+`NewHandler(generated.DirectiveRoot{...})` with pass-through directives. If `graphql/init.go` has no such
+seam, split it: `Init` keeps building the real directives from config and returns
+`NewHandler(generated.DirectiveRoot{Authenticate: directive.Authenticate(), ...})`; `NewHandler` holds the
+rest of the old body (`generated.Config{Resolvers: resolver.NewResolver(), Directives: directives}`,
+server, error presenter, `EnrichContext`, loader middleware). Behaviour is unchanged.
+
+Scalars `Time`, `Any` and `Map`, inputs `Filter`, `PageInput`, `Sort` and the enums `FilterOperator`,
+`SortOrder` must exist in the module schema. Add whichever are missing from the bootstrap module
+templates (`templates/module/.../graphql/schema/`). `graphql/mapper/query_builder.go` must expose
+`MapQueryOptionsToQueryBuilder(QueryOptions) *coredto.QueryBuilder`. If the module's version returns
+`(*coredto.QueryBuilder, error)`, adapt the generated resolver call instead of changing the module: when
+that error is always nil (backend-b, backend-a), `queryBuilder, _ := ...` with a one-line comment keeps
+the 100% gate honest; otherwise handle it and add a test that triggers it.
+{{- if .Entity.Loader }}
+
+## internal/app/{{ .Module.Name }}/graphql/loader/master_loader.go
+
+```go
+{{ .Entity.Name }}Loader *dataloader.Loader[{{ .Entity.IDGo }}, *dto.{{ .Entity.Name }}]
+```
+
+```go
+{{ .Entity.Name }}Loader: loader.NewBuilder(service.GetFactory().Get{{ .Entity.Name }}Service().GetByIDs).Build(),
+```
+
+## internal/app/{{ .Module.Name }}/graphql/resolver/entity.resolvers.go
+
+After `make gql MODULE={{ .Module.Name }}` (or the repo's gqlgen command) gqlgen adds a
+`Find{{ .Entity.Name }}ByID` stub that panics. Replace its body:
+
+```go
+{{ .Entity.Var }}, err := loader.GetLoader(ctx).{{ .Entity.Name }}Loader.Load(ctx, id)()
+if err != nil {
+	return nil, err
+}
+return mapper.Map{{ .Entity.Name }}ToGraphqlModel({{ .Entity.Var }})
+```
+
+If the module's handler does not install a loader middleware yet, add one (see the module template's
+`graphql/init.go`), building loaders per request.
+
+Federation's `_entities` field has no directive. If `NewHandler` does not already gate it, add the
+`AroundFields` hook from the module template's `graphql/init.go` so it runs `Authenticate` first, and a
+test that a rejecting `Authenticate` blocks `_entities`. Tell the developer: existing entities in this
+module become authenticated too, which is the intent.
+{{- end }}
+{{- end }}

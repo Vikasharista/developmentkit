@@ -1,0 +1,105 @@
+// Package auth wires the {{ .ModuleTitle }} module's authentication and permission
+// checks. GraphQL fields use them as @authenticate / @hasPermission directives; REST
+// routes run the same functions as gin middleware, so both surfaces share one path.
+package auth
+
+import (
+	"context"
+	"net/http"
+
+	"{{ .Service.CoreModule }}/config"
+	coreerrors "{{ .Service.CoreModule }}/errors"
+	"{{ .Service.CoreModule }}/graphql/authdirective"
+	"github.com/99designs/gqlgen/graphql"
+	"github.com/gin-gonic/gin"
+)
+
+// Directive is a gqlgen field directive without arguments.
+type Directive func(ctx context.Context, obj interface{}, next graphql.Resolver) (interface{}, error)
+
+// PermissionDirective is a gqlgen field directive taking the permission to check.
+type PermissionDirective func(ctx context.Context, obj interface{}, next graphql.Resolver, permission string) (interface{}, error)
+
+// Directives is the auth surface of this module.
+type Directives struct {
+	Authenticate  Directive
+	HasPermission PermissionDirective
+}
+
+// New builds the directives from config. Tests replace it with PassThrough.
+var New = func() (*Directives, error) {
+{{- if eq .Module.Auth "config" }}
+	directive, err := authdirective.New(authdirective.ConfigFromViper(config.Viper, "auth"))
+	if err != nil {
+		return nil, err
+	}
+	return &Directives{Authenticate: directive.Authenticate(), HasPermission: directive.HasPermission()}, nil
+{{- else }}
+	directive, err := authdirective.NewVerifierDirective(config.Viper.GetString("services.gateway.url"))
+	if err != nil {
+		return nil, err
+	}
+	return &Directives{
+		Authenticate: directive.Authenticate(),
+		HasPermission: func(ctx context.Context, obj interface{}, next graphql.Resolver, permission string) (interface{}, error) {
+			return directive.VerifyUserPermission(permission)(ctx, obj, next)
+		},
+	}, nil
+{{- end }}
+}
+
+// PassThrough lets every call through. For tests only: the caller identity then
+// comes from the X-User-Id header, as core-lib's base model falls back to it.
+func PassThrough() *Directives {
+	return &Directives{
+		Authenticate: func(ctx context.Context, _ interface{}, next graphql.Resolver) (interface{}, error) {
+			return next(ctx)
+		},
+		HasPermission: func(ctx context.Context, _ interface{}, next graphql.Resolver, _ string) (interface{}, error) {
+			return next(ctx)
+		},
+	}
+}
+
+// Gin runs Authenticate, then HasPermission when permission is set, in front of a
+// REST route and hands the authenticated context to the handler. Authentication
+// always runs first so the audit columns come from the verified session.
+func (d *Directives) Gin(permission string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var authorised context.Context
+		next := func(ctx context.Context) (interface{}, error) {
+			authorised = ctx
+			return nil, nil
+		}
+		check := func(ctx context.Context) (interface{}, error) {
+			if permission == "" {
+				return next(ctx)
+			}
+			return d.HasPermission(ctx, nil, next, permission)
+		}
+
+		if _, err := d.Authenticate(c.Request.Context(), nil, check); err != nil {
+			status, body := deny(err)
+			c.AbortWithStatusJSON(status, body)
+			return
+		}
+
+		c.Request = c.Request.WithContext(authorised)
+		c.Next()
+	}
+}
+
+// deny maps an auth failure to a response. Anything that is not a clear
+// authentication or permission refusal (the auth service being down, say) is a
+// 503 without the upstream detail.
+func deny(err error) (int, gin.H) {
+	if baseErr, ok := err.(coreerrors.BaseErr); ok {
+		switch baseErr.Code() {
+		case coreerrors.UnauthenticatedErrorCode, coreerrors.RequiredHeaderMissingErrorCode:
+			return http.StatusUnauthorized, gin.H{"code": baseErr.Code(), "error": baseErr.Error()}
+		case coreerrors.ForbiddenErrorCode, coreerrors.UnauthorisedErrorCode:
+			return http.StatusForbidden, gin.H{"code": baseErr.Code(), "error": baseErr.Error()}
+		}
+	}
+	return http.StatusServiceUnavailable, gin.H{"code": coreerrors.InternalServerErrorCode, "error": "authorisation is unavailable"}
+}

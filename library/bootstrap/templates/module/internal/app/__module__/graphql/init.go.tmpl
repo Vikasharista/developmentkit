@@ -1,0 +1,64 @@
+{{- if .Module.GraphQL -}}
+package graphql
+
+import (
+{{- if .Entity.Loader }}
+	"context"
+{{- end }}
+	"net/http"
+
+	coregraphql "{{ .Service.CoreModule }}/graphql"
+	"{{ .ModuleImport }}/auth"
+	"{{ .ModuleImport }}/graphql/generated"
+{{- if .Entity.Loader }}
+	"{{ .ModuleImport }}/graphql/loader"
+{{- end }}
+	"{{ .ModuleImport }}/graphql/resolver"
+{{- if .Entity.Loader }}
+	gqlgraphql "github.com/99designs/gqlgen/graphql"
+{{- end }}
+	"github.com/99designs/gqlgen/graphql/handler"
+)
+
+// Init builds the {{ .ModuleTitle }} subgraph handler, mounted at POST /{{ .Module.Route }}.
+func Init() (http.Handler, error) {
+	directives, err := auth.New()
+	if err != nil {
+		return nil, err
+	}
+	return NewHandler(generated.DirectiveRoot{
+		Authenticate:  directives.Authenticate,
+		HasPermission: directives.HasPermission,
+	}), nil
+}
+
+// NewHandler builds the handler with the given directives; tests pass pass-through ones.
+func NewHandler(directives generated.DirectiveRoot) http.Handler {
+	gqlConfig := generated.Config{Resolvers: resolver.NewResolver(), Directives: directives}
+
+	gqlServer := handler.NewDefaultServer(generated.NewExecutableSchema(gqlConfig))
+	coregraphql.PresentGqlError(gqlServer)
+{{- if .Entity.Loader }}
+	// Federation's _entities field carries no directive of its own; without this any
+	// caller who can reach the subgraph could read rows by ID.
+	gqlServer.AroundFields(func(ctx context.Context, next gqlgraphql.Resolver) (interface{}, error) {
+		if field := gqlgraphql.GetFieldContext(ctx); field.Object == "Query" && field.Field.Name == "_entities" {
+			return directives.Authenticate(ctx, nil, next)
+		}
+		return next(ctx)
+	})
+	return loaderMiddleware(coregraphql.EnrichContext(gqlServer))
+}
+
+// loaderMiddleware gives every request its own dataloaders, so batches never mix
+// namespaces or users.
+func loaderMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		next.ServeHTTP(w, r.WithContext(loader.WithLoader(r.Context())))
+	})
+}
+{{- else }}
+	return coregraphql.EnrichContext(gqlServer)
+}
+{{- end }}
+{{- end }}

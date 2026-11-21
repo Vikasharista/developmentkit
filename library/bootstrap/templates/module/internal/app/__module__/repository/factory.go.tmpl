@@ -1,0 +1,27 @@
+package repository
+
+import "sync"
+
+var (
+	repositoryFactory *factory
+	repositorySync    sync.Once
+)
+
+// factory hands out one lazily built instance of each repository.
+type factory struct {
+	{{ .Entity.Var }}Repository     {{ .Entity.Name }}Repository
+	{{ .Entity.Var }}RepositorySync sync.Once
+	// bootstrap:repository-fields
+}
+
+func GetFactory() *factory {
+	repositorySync.Do(func() { repositoryFactory = &factory{} })
+	return repositoryFactory
+}
+
+func (f *factory) Get{{ .Entity.Name }}Repository() {{ .Entity.Name }}Repository {
+	f.{{ .Entity.Var }}RepositorySync.Do(func() { f.{{ .Entity.Var }}Repository = new{{ .Entity.Name }}Repository() })
+	return f.{{ .Entity.Var }}Repository
+}
+
+// bootstrap:repository-getters

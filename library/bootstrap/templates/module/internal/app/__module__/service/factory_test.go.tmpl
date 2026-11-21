@@ -1,0 +1,14 @@
+package service
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestFactory(t *testing.T) {
+	require.Same(t, GetFactory(), GetFactory())
+	require.NotNil(t, GetFactory().Get{{ .Entity.Name }}Service())
+	require.Same(t, GetFactory().Get{{ .Entity.Name }}Service(), GetFactory().Get{{ .Entity.Name }}Service())
+	// bootstrap:service-factory-tests
+}

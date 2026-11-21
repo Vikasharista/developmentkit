@@ -1,0 +1,96 @@
+{{- if and .Module.REST (.Entity.Has "create") -}}
+//go:build integration
+
+package rest
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"{{ .ModuleImport }}/auth"
+	"{{ .Service.ModulePath }}/internal/testutil/pgtest"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+func TestE2E{{ .Entity.Name }}REST(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	Register(router.Group("/{{ .Module.Route }}/v1"), auth.PassThrough())
+	server := httptest.NewServer(router)
+	t.Cleanup(server.Close)
+	namespace := pgtest.Namespace(t)
+	base := server.URL + "/{{ .Module.Route }}/v1/{{ .Entity.PluralKebab }}"
+
+	call := func(method, url string, body interface{}) (int, map[string]interface{}) {
+		t.Helper()
+		var payload bytes.Buffer
+		if body != nil {
+			require.NoError(t, json.NewEncoder(&payload).Encode(body))
+		}
+		request, err := http.NewRequest(method, url, &payload)
+		require.NoError(t, err)
+		request.Header.Set("Content-Type", "application/json")
+		request.Header.Set("X-Namespace-Id", namespace)
+		request.Header.Set("X-User-Id", pgtest.User)
+		response, err := http.DefaultClient.Do(request)
+		require.NoError(t, err)
+		defer response.Body.Close()
+		out := map[string]interface{}{}
+		require.NoError(t, json.NewDecoder(response.Body).Decode(&out))
+		return response.StatusCode, out
+	}
+	input := func(seed int) map[string]interface{} {
+		return map[string]interface{}{
+{{- range .Entity.SampleFields }}
+			"{{ .GQLName }}": {{ .SeedJSONGo }},
+{{- end }}
+		}
+	}
+
+	status, created := call(http.MethodPost, base, input(1))
+	require.Equal(t, http.StatusCreated, status, created)
+	require.Equal(t, pgtest.User, created["createdBy"])
+	id := fmt.Sprint(created["id"])
+{{- if .Entity.UniqueFields }}
+
+	status, duplicate := call(http.MethodPost, base, input(1))
+	require.Equal(t, http.StatusConflict, status, duplicate)
+{{- end }}
+{{- if .Entity.Has "get" }}
+
+	status, got := call(http.MethodGet, base+"/"+id, nil)
+	require.Equal(t, http.StatusOK, status, got)
+	require.Equal(t, created["id"], got["id"])
+{{- end }}
+{{- if .Entity.Has "list" }}
+
+	status, page := call(http.MethodGet, base+"?size=5&sort=-createdAt&id="+id, nil)
+	require.Equal(t, http.StatusOK, status, page)
+	require.EqualValues(t, 1, page["totalCount"])
+
+	status, page = call(http.MethodGet, base+"?deletedBy=x", nil)
+	require.Equal(t, http.StatusBadRequest, status, page)
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+	status, updated := call(http.MethodPatch, base+"/"+id, map[string]interface{}{"isActive": false})
+	require.Equal(t, http.StatusOK, status, updated)
+	require.Equal(t, false, updated["isActive"])
+{{- if .Entity.Versioned }}
+	require.EqualValues(t, 2, updated["version"])
+{{- end }}
+{{- end }}
+{{- if .Entity.Has "delete" }}
+
+	status, deleted := call(http.MethodDelete, base+"/"+id, nil)
+	require.Equal(t, http.StatusOK, status, deleted)
+	status, deleted = call(http.MethodDelete, base+"/"+id, nil)
+	require.Equal(t, http.StatusNotFound, status, deleted)
+{{- end }}
+}
+{{- end }}

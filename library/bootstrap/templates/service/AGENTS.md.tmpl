@@ -1,0 +1,49 @@
+# AGENTS.md
+
+Rules for changing {{ .Service.Name }}. They apply to people and coding agents alike.
+
+## Read order
+
+1. [README.md](README.md)
+2. [doc/architecture.md](doc/architecture.md)
+3. [internal/doc/module-conventions.md](internal/doc/module-conventions.md)
+4. The README of the module you are changing
+5. [doc/development.md](doc/development.md) before running anything
+
+## Non-negotiable conventions
+
+- A module owns everything under `internal/app/<module>`; other modules call its service, never its repository.
+- Layers: resolver / controller (transport only) → service (rules, validation) → repository (SQL only).
+  Mappers translate between layers with copier; nothing else converts types.
+- Persistent models embed a core-lib base model (`VersionedNamespaceModelIDString` by default).
+  Never declare `DeletedAt`, `CreatedBy` and friends yourself.
+- Every read filters by namespace (`utility.AppendNamespaceFilterToQuery`) and `deleted_at IS NULL`.
+  Every write gets its namespace from the context through the base model hooks.
+- List queries go through the entity's column and operator allow-list in the service.
+- Migrations are forward-only: never edit one that has run anywhere. Each has a `.down.sql`.
+  Every table gets the `log_audit_trigger`.
+- No secrets in committed config. They arrive as `APP_*` environment variables or the environment's
+  mounted override.
+- Generated code (`graphql/generated`) is never edited by hand; run `make gql MODULE=<module>`.
+- Hand-written code under `internal/` stays at 100% test coverage (`make cover`).
+
+## Change checklist
+
+- [ ] Migration pair added (`make migrate-new NAME=...`), applied locally, rolled back once, re-applied
+- [ ] Model, DTO, repository, service, mappers, resolver / controller updated together
+- [ ] `make gql MODULE=<module>` run for each module whose schema changed
+- [ ] `make lint` and `make cover` pass
+- [ ] Module README updated; this file's module index and README updated if a module was added
+- [ ] New GraphQL module added to `scripts/supergraph/supergraph.yaml` and the GitOps router config
+
+## Module index
+
+| Module | README |
+|---|---|
+| `{{ .Module.Name }}` | [internal/app/{{ .Module.Name }}/README.md](internal/app/{{ .Module.Name }}/README.md) |
+
+## Scaffolding
+
+This repo was bootstrapped with the devkit `bootstrap` verb. New entities and modules
+should come from it too (`/devkit:bootstrap`): it keeps every layer, test and doc in the
+shape described here. The agreed spec of each run is kept under `.bootstrap/`.

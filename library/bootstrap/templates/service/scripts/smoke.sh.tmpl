@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Probes a running server. Override BASE_URL, NAMESPACE and AUTH_COOKIE as needed;
+# the GraphQL call needs a real session cookie because @authenticate is live.
+set -euo pipefail
+
+BASE_URL="${BASE_URL:-http://localhost:{{ .Service.Port }}}"
+NAMESPACE="${NAMESPACE:-{{ .Service.Namespace }}}"
+
+echo "GET ${BASE_URL}/livez"
+curl -fsS "${BASE_URL}/livez"; echo
+echo "GET ${BASE_URL}/healthz"
+curl -fsS "${BASE_URL}/healthz"; echo
+{{- if .Module.GraphQL }}
+echo "POST ${BASE_URL}/{{ .Module.Route }} (schema probe)"
+curl -fsS "${BASE_URL}/{{ .Module.Route }}" \
+  -H 'Content-Type: application/json' \
+  -H "X-Namespace-Id: ${NAMESPACE}" \
+  ${AUTH_COOKIE:+-H "Cookie: ${AUTH_COOKIE}"} \
+  -d '{"query":"{ __typename }"}'; echo
+{{- end }}

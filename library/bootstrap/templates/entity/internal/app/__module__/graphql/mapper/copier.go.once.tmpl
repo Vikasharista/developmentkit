@@ -1,0 +1,12 @@
+{{- if .Module.GraphQL -}}
+package mapper
+
+import "github.com/jinzhu/copier"
+
+// CopyWithOption is copier.CopyWithOption. Tests replace it to exercise the
+// copy-failure paths of the mappers and their callers.
+var CopyWithOption = copier.CopyWithOption
+
+// copyIgnoringEmpty skips nil and zero source fields.
+var copyIgnoringEmpty = copier.Option{DeepCopy: true, IgnoreEmpty: true}
+{{- end }}

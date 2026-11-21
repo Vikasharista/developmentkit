@@ -1,0 +1,22 @@
+{
+  "mode": "service",
+  "service": {"name": "inventory-service", "module_path": "bitbucket.org/your-org/inventory-service", "core_module": "bitbucket.org/your-org/core-lib", "db_port": 55440, "port": 8091},
+  "module": {"name": "purchase_planner", "graphql": false, "rest": true, "auth": "verifier"},
+  "entity": {
+    "name": "PurchaseLot", "plural": "PurchaseLots", "table": "purchase_lots", "id_type": "int",
+    "versioned": false, "loader": false, "operations": ["create", "get", "list", "update"],
+    "permissions": {
+      "create": "your-org::inventory-service::inventory-service::purchase-lot::create",
+      "update": "your-org::inventory-service::inventory-service::purchase-lot::edit",
+      "get": "your-org::inventory-service::inventory-service::purchase-lot::view",
+      "list": "your-org::inventory-service::inventory-service::purchase-lot::view"
+    },
+    "fields": [
+      {"name": "lot_code", "type": "string", "max_len": 32, "unique": true},
+      {"name": "weight_kg", "type": "decimal", "nullable": true},
+      {"name": "grade", "type": "enum", "enum": ["A", "B"], "nullable": true},
+      {"name": "received_at", "type": "timestamp"}
+    ]
+  },
+  "migration": {"number": 2, "description": "purchase_lots"}
+}

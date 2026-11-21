@@ -1,0 +1,39 @@
+# {{ .Service.Name }}
+
+{{ if .Service.Description }}{{ .Service.Description }}{{ else }}Backend service.{{ end }}
+
+Go service on the in-house backend stack: core-lib (config, logger, Postgres, transactions,
+auth directives), gin, gqlgen federation v2 subgraphs, GORM on Postgres, golang-migrate.
+
+## Start here
+
+| Read | For |
+|---|---|
+| [AGENTS.md](AGENTS.md) | Rules for anyone changing this repo, people or agents |
+| [doc/architecture.md](doc/architecture.md) | How a request flows through the layers |
+| [doc/development.md](doc/development.md) | Running, testing, debugging, adding entities |
+| [doc/deployment.md](doc/deployment.md) | Image, config, migrations in each environment |
+| [internal/doc/module-conventions.md](internal/doc/module-conventions.md) | The module rulebook |
+
+## Modules
+
+| Module | Owns | Surface | Docs |
+|---|---|---|---|
+| `{{ .Module.Name }}` | {{ if .Module.Description }}{{ .Module.Description }}{{ else }}{{ .Entity.Plural }}{{ end }} | {{ if .Module.GraphQL }}GraphQL `POST /{{ .Module.Route }}`{{ end }}{{ if and .Module.GraphQL .Module.REST }}, {{ end }}{{ if .Module.REST }}REST `/{{ .Module.Route }}/v1`{{ end }} | [README](internal/app/{{ .Module.Name }}/README.md) |
+
+## Quick start
+
+```bash
+make setup        # dlv, config/local.yaml, go modules
+make db-up        # Postgres in docker on :{{ .Service.DBPort }}
+make migrate-up   # apply migrations
+make serve        # http://localhost:{{ .Service.Port }}{{ if .Module.GraphQL }}/{{ .Module.Route }}/playground{{ end }}
+make cover        # every test, 100% coverage gate
+```
+
+`make` with no target lists everything.
+
+## Documentation rule
+
+Every change that adds or changes behaviour updates the docs in the same PR: the module README for
+module changes, this README and AGENTS.md for anything repo-wide. Docs are indexed from here.

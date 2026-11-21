@@ -1,0 +1,62 @@
+{{- if .Module.GraphQL -}}
+package graphql
+
+import (
+{{- if .Entity.Loader }}
+	"context"
+{{- end }}
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"{{ .ModuleImport }}/auth"
+{{- if .Entity.Loader }}
+	"{{ .ModuleImport }}/graphql/generated"
+	gqlgraphql "github.com/99designs/gqlgen/graphql"
+{{- end }}
+	"github.com/stretchr/testify/require"
+)
+
+func TestInit(t *testing.T) {
+	previous := auth.New
+	t.Cleanup(func() { auth.New = previous })
+
+	auth.New = func() (*auth.Directives, error) { return auth.PassThrough(), nil }
+	h, err := Init()
+	require.NoError(t, err)
+
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(`{"query":"{ __typename }"}`))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, request)
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"__typename":"Query"`)
+}
+
+func TestInit_AuthError(t *testing.T) {
+	previous := auth.New
+	t.Cleanup(func() { auth.New = previous })
+
+	auth.New = func() (*auth.Directives, error) { return nil, errors.New("no auth config") }
+	_, err := Init()
+	require.Error(t, err)
+}
+{{- if .Entity.Loader }}
+
+func TestNewHandler_EntitiesNeedAuthentication(t *testing.T) {
+	reject := func(context.Context, interface{}, gqlgraphql.Resolver) (interface{}, error) {
+		return nil, errors.New("no session")
+	}
+	h := NewHandler(generated.DirectiveRoot{Authenticate: reject})
+
+	body := `{"query":"query { _entities(representations: [{__typename: \"{{ .Entity.Name }}\", id: {{ if eq .Entity.IDType "int" }}1{{ else }}\"x\"{{ end }}}]) { __typename } }"}`
+	request := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	h.ServeHTTP(recorder, request)
+	require.Contains(t, recorder.Body.String(), "no session")
+}
+{{- end }}
+{{- end }}

@@ -1,0 +1,18 @@
+package model
+
+import (
+{{- if .Entity.NeedsTime }}
+	"time"
+
+{{ end }}
+	"{{ .Service.CoreModule }}/model"
+)
+
+// {{ .Entity.Name }} is a row of {{ .Table }}. The embedded core-lib model owns id,
+// namespace, the audit columns, is_active{{ if .Entity.Versioned }}, version{{ end }} and soft delete.
+type {{ .Entity.Name }} struct {
+	model.{{ .Entity.BaseModel }}
+{{- range .Entity.Fields }}
+	{{ .GoName }} {{ .GoType }} {{ .GormTag }}
+{{- end }}
+}

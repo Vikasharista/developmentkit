@@ -1,0 +1,34 @@
+package service
+
+import (
+	"testing"
+
+	coredto "{{ .Service.CoreModule }}/dto"
+	"github.com/stretchr/testify/require"
+)
+
+func TestQueryColumn(t *testing.T) {
+	for in, want := range map[string]string{
+		"createdAt": "created_at", "created_at": "created_at", "ID": "id", "skuID": "sku_id",
+		"HTTPServer": "http_server", "line2Total": "line2_total", " isActive ": "is_active",
+	} {
+		require.Equal(t, want, queryColumn(in), in)
+	}
+}
+
+func TestValidateFilterValue(t *testing.T) {
+	for _, filter := range []coredto.Filter{
+		{Field: "code", Operator: "EQ", Value: 5},
+		{Field: "code", Operator: "LIKE", Value: "a%"},
+		{Field: "code", Operator: "IN", Value: []interface{}{"a"}},
+	} {
+		require.NoError(t, validateFilterValue(filter), filter.Operator)
+	}
+	for _, filter := range []coredto.Filter{
+		{Field: "code", Operator: "ILIKE", Value: 5},
+		{Field: "code", Operator: "IN", Value: []interface{}{}},
+		{Field: "code", Operator: "NIN", Value: "a"},
+	} {
+		require.Error(t, validateFilterValue(filter), filter.Operator)
+	}
+}

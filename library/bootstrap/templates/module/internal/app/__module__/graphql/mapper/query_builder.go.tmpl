@@ -1,0 +1,47 @@
+{{- if .Module.GraphQL -}}
+package mapper
+
+import (
+	coredto "{{ .Service.CoreModule }}/dto"
+	"{{ .ModuleImport }}/graphql/generated"
+)
+
+type QueryOptions struct {
+	Filters []*generated.Filter
+	Page    *generated.PageInput
+	Sort    []*generated.Sort
+}
+
+// MapQueryOptionsToQueryBuilder turns GraphQL list arguments into core-lib's query
+// builder. Field names are checked against the entity's allow-list in the service.
+func MapQueryOptionsToQueryBuilder(queryOptions QueryOptions) *coredto.QueryBuilder {
+	queryBuilder := &coredto.QueryBuilder{}
+
+	if queryOptions.Page != nil {
+		queryBuilder.Limit = queryOptions.Page.FetchSize
+		queryBuilder.Offset = (queryOptions.Page.PageNumber - 1) * queryOptions.Page.FetchSize
+	}
+
+	for _, sort := range queryOptions.Sort {
+		order := coredto.ASC
+		if sort.Order != nil && *sort.Order == generated.SortOrderDesc {
+			order = coredto.DESC
+		}
+		queryBuilder.Sort = append(queryBuilder.Sort, &coredto.Sort{SortBy: sort.SortBy, Order: order})
+	}
+
+	for _, filter := range queryOptions.Filters {
+		operator := string(generated.FilterOperatorEq)
+		if filter.Operator != nil {
+			operator = string(*filter.Operator)
+		}
+		queryBuilder.Filters = append(queryBuilder.Filters, coredto.Filter{
+			Field:    filter.Field,
+			Operator: operator,
+			Value:    filter.Value,
+		})
+	}
+
+	return queryBuilder
+}
+{{- end }}

@@ -1,0 +1,7 @@
+{{- if .Module.GraphQL -}}
+input Filter {
+  field: String!
+  operator: FilterOperator = EQ
+  value: Any
+}
+{{- end }}

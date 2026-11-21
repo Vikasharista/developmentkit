@@ -1,0 +1,40 @@
+## internal/server.go (or wherever the repo mounts modules)
+
+Mount the new module the way existing modules are mounted:
+{{- if .Module.GraphQL }}
+
+```go
+{{ .ModuleAlias }}Handler, err := {{ .ModuleAlias }}Graphql.Init()   // import {{ .ModuleAlias }}Graphql "{{ .ModuleImport }}/graphql"
+if err != nil {
+	return err
+}
+router.POST("/{{ .Module.Route }}", gin.WrapH({{ .ModuleAlias }}Handler))
+router.GET("/{{ .Module.Route }}/playground", playgroundHandler("/{{ .Module.Route }}"))
+```
+{{- end }}
+{{- if .Module.REST }}
+
+```go
+if err := {{ .ModuleAlias }}Rest.Init(router.Group("/{{ .Module.Route }}/v1")); err != nil {   // import {{ .ModuleAlias }}Rest "{{ .ModuleImport }}/rest"
+	return err
+}
+```
+{{- end }}
+
+If the repo also serves routes under a gateway prefix (backend-a `withGatewayPrefix`, backend-b
+`webhookPrefixes`), mount there too.
+{{- if .Module.GraphQL }}
+
+## Supergraph
+
+- backend-b: add `{{ .Module.Route }}` to `scripts/supergraph/supergraph.yaml`
+  (`routing_url: http://127.0.0.1:8080/{{ .Module.Route }}`); `scripts/supergraph/supergraph_test.go` fails until you do.
+- backend-a: add it to `apollo-router/supergraph-local.yaml`.
+- The deployed router lives in the GitOps repo (for backend-a `gitops-non-prod/apollo-router/values.yaml`,
+  `routing_url: http://backend-a/{{ .Module.Route }}`). Do not edit that repo from here: hand the user this snippet.
+{{- end }}
+
+## Root docs
+
+Add `{{ .Module.Name }}` to the module map in README.md and the Module Index in AGENTS.md (or the repo's
+equivalents), one line each, linking `internal/app/{{ .Module.Name }}/README.md`.

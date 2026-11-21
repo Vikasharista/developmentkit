@@ -1,0 +1,13 @@
+{{- if .Module.REST -}}
+## internal/app/{{ .Module.Name }}/rest/router.go
+
+Inside `Register`, mount the new routes:
+
+```go
+register{{ .Entity.Name }}Routes(group, directives, new{{ .Entity.Name }}Controller(service.GetFactory().Get{{ .Entity.Name }}Service()))
+```
+
+If the module has no `rest` package yet, render one with bootstrap in module mode into a scratch
+directory and copy `rest/router.go` and `rest/router_test.go` over, then mount `rest.Init` in the
+service's router.
+{{- end }}

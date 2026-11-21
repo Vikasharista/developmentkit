@@ -1,0 +1,309 @@
+package service
+
+import (
+	"context"
+	"errors"
+{{- if or .Entity.NeedsFmt (ne .Entity.IDType "int") }}
+	"fmt"
+{{- end }}
+{{- if and (.Entity.Has "update") (.Entity.HasType "string") }}
+	"strings"
+{{- end }}
+	"testing"
+{{- if .Entity.NeedsTime }}
+	"time"
+{{- end }}
+
+{{- if .Entity.Has "list" }}
+	coredto "{{ .Service.CoreModule }}/dto"
+{{- end }}
+	coreerrors "{{ .Service.CoreModule }}/errors"
+	"{{ .Service.CoreModule }}/logger"
+	"{{ .Service.CoreModule }}/transaction"
+{{- if or (.Entity.Has "update") .Entity.NeedsUtility }}
+	"{{ .Service.CoreModule }}/utility"
+{{- end }}
+	"{{ .ModuleImport }}/dto"
+	"{{ .ModuleImport }}/mapper"
+	"{{ .ModuleImport }}/model"
+	"github.com/jinzhu/copier"
+	"github.com/stretchr/testify/require"
+	rqp "github.com/timsolov/rest-query-parser"
+)
+
+func init() { _, _ = logger.Init(0) }
+
+var errStub{{ .Entity.Name }} = errors.New("stub failure")
+
+// stub{{ .Entity.Name }}Repository answers from in-memory functions; unset ones fail the test.
+type stub{{ .Entity.Name }}Repository struct {
+	t       *testing.T
+	create  func(*model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error)
+	update  func(*model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error)
+	delete  func({{ .Entity.IDGo }}) error
+	get     func(*rqp.Query) ([]*model.{{ .Entity.Name }}, int, error)
+	getByID func({{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error)
+}
+
+func (r *stub{{ .Entity.Name }}Repository) DoInTransaction(ctx context.Context, fn transaction.Func, _ ...interface{}) error {
+	return fn(ctx)
+}
+
+func (r *stub{{ .Entity.Name }}Repository) Create(_ context.Context, m *model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error) {
+	require.NotNil(r.t, r.create, "unexpected Create")
+	return r.create(m)
+}
+
+func (r *stub{{ .Entity.Name }}Repository) Update(_ context.Context, m *model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error) {
+	require.NotNil(r.t, r.update, "unexpected Update")
+	return r.update(m)
+}
+
+func (r *stub{{ .Entity.Name }}Repository) Delete(_ context.Context, id {{ .Entity.IDGo }}) error {
+	require.NotNil(r.t, r.delete, "unexpected Delete")
+	return r.delete(id)
+}
+
+func (r *stub{{ .Entity.Name }}Repository) Get(_ context.Context, q *rqp.Query) ([]*model.{{ .Entity.Name }}, int, error) {
+	require.NotNil(r.t, r.get, "unexpected Get")
+	return r.get(q)
+}
+
+func (r *stub{{ .Entity.Name }}Repository) GetByID(_ context.Context, id {{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error) {
+	require.NotNil(r.t, r.getByID, "unexpected GetByID")
+	return r.getByID(id)
+}
+
+func fail{{ $.Entity.Name }}Copy(t *testing.T) {
+	previous := mapper.CopyWithOption
+	t.Cleanup(func() { mapper.CopyWithOption = previous })
+	mapper.CopyWithOption = func(interface{}, interface{}, copier.Option) error { return errors.New("copy failed") }
+}
+
+func sample{{ .Entity.Name }}Row(seed int) *model.{{ .Entity.Name }} {
+	row := &model.{{ .Entity.Name }}{
+{{- range .Entity.SampleFields }}
+		{{ .GoName }}: {{ .SeedGo }},
+{{- end }}
+	}
+	row.ID = {{ if eq .Entity.IDType "int" }}seed{{ else }}fmt.Sprintf("id-%d", seed){{ end }}
+	return row
+}
+
+func sampleCreate{{ .Entity.Name }}Request(seed int) *dto.Create{{ .Entity.Name }}Request {
+	return &dto.Create{{ .Entity.Name }}Request{
+{{- range .Entity.SampleFields }}
+		{{ .GoName }}: {{ .SeedCreateGo }},
+{{- end }}
+	}
+}
+
+func require{{ $.Entity.Name }}Code(t *testing.T, err error, code string) {
+	t.Helper()
+	baseErr, ok := err.(coreerrors.BaseErr)
+	require.True(t, ok, "want a core-lib coded error, got %T: %v", err, err)
+	require.Equal(t, code, baseErr.Code())
+}
+{{- $e := .Entity }}
+{{- if .Entity.Has "create" }}
+
+func Test{{ .Entity.Name }}Service_Create(t *testing.T) {
+	ctx := context.Background()
+	repository := &stub{{ .Entity.Name }}Repository{t: t}
+	svc := &{{ .Entity.Var }}Service{repository: repository}
+
+	repository.create = func(m *model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error) {
+		m.ID = {{ if eq .Entity.IDType "int" }}1{{ else }}"id-1"{{ end }}
+		return m, nil
+	}
+	created, err := svc.Create(ctx, sampleCreate{{ .Entity.Name }}Request(1))
+	require.NoError(t, err)
+	require.Equal(t, {{ if eq .Entity.IDType "int" }}1{{ else }}"id-1"{{ end }}, created.ID)
+
+	repository.create = func(*model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error) { return nil, errStub{{ .Entity.Name }} }
+	_, err = svc.Create(ctx, sampleCreate{{ .Entity.Name }}Request(1))
+	require.ErrorIs(t, err, errStub{{ .Entity.Name }})
+{{- range .Entity.Fields }}{{ if and .Required (or (eq .Type "string") (eq .Type "text") (eq .Type "enum") (eq .Type "ref")) }}
+
+	missing{{ .GoName }} := sampleCreate{{ $e.Name }}Request(1)
+	missing{{ .GoName }}.{{ .GoName }} = ""
+	_, err = svc.Create(ctx, missing{{ .GoName }})
+	require{{ $.Entity.Name }}Code(t, err, coreerrors.BadRequestErrorCode)
+{{- end }}{{ end }}
+{{- range .Entity.Fields }}{{ if .CreatePtr }}
+
+	missing{{ .GoName }} := sampleCreate{{ $e.Name }}Request(1)
+	missing{{ .GoName }}.{{ .GoName }} = nil
+	_, err = svc.Create(ctx, missing{{ .GoName }})
+	require{{ $.Entity.Name }}Code(t, err, coreerrors.BadRequestErrorCode)
+{{- end }}{{ end }}
+{{- range .Entity.Enums }}
+
+	bad{{ .GoName }} := sampleCreate{{ $e.Name }}Request(1)
+	bad{{ .GoName }}.{{ .GoName }} = {{ if .Ptr }}utility.GetPointerToPrimitiveType("NOT_A_VALUE"){{ else }}"NOT_A_VALUE"{{ end }}
+	_, err = svc.Create(ctx, bad{{ .GoName }})
+	require{{ $.Entity.Name }}Code(t, err, coreerrors.BadRequestErrorCode)
+{{- end }}
+
+	fail{{ $.Entity.Name }}Copy(t)
+	_, err = svc.Create(ctx, sampleCreate{{ .Entity.Name }}Request(1))
+	require.Error(t, err)
+}
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+func Test{{ .Entity.Name }}Service_Update(t *testing.T) {
+	ctx := context.Background()
+	repository := &stub{{ .Entity.Name }}Repository{t: t}
+	svc := &{{ .Entity.Var }}Service{repository: repository}
+	id := sample{{ .Entity.Name }}Row(1).ID
+	seed := 2
+	patch := &dto.Update{{ .Entity.Name }}Request{
+{{- range .Entity.SampleFields }}
+		{{ .GoName }}: {{ .SeedPatchGo }},
+{{- end }}
+		IsActive: utility.GetPointerToPrimitiveType(false),
+	}
+
+	repository.getByID = func({{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error) { return sample{{ .Entity.Name }}Row(1), nil }
+	repository.update = func(m *model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error) { return m, nil }
+	updated, err := svc.Update(ctx, id, patch)
+	require.NoError(t, err)
+	require.False(t, updated.IsActive)
+
+	repository.update = func(*model.{{ .Entity.Name }}) (*model.{{ .Entity.Name }}, error) { return nil, errStub{{ .Entity.Name }} }
+	_, err = svc.Update(ctx, id, patch)
+	require.ErrorIs(t, err, errStub{{ .Entity.Name }})
+
+	repository.getByID = func({{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error) { return nil, errStub{{ .Entity.Name }} }
+	_, err = svc.Update(ctx, id, patch)
+	require.ErrorIs(t, err, errStub{{ .Entity.Name }})
+{{- range .Entity.Enums }}
+
+	_, err = svc.Update(ctx, id, &dto.Update{{ $e.Name }}Request{ {{- .GoName }}: utility.GetPointerToPrimitiveType("NOT_A_VALUE")})
+	require{{ $.Entity.Name }}Code(t, err, coreerrors.BadRequestErrorCode)
+{{- end }}
+{{- range .Entity.Fields }}{{ if eq .Type "string" }}
+
+	_, err = svc.Update(ctx, id, &dto.Update{{ $e.Name }}Request{ {{- .GoName }}: utility.GetPointerToPrimitiveType(strings.Repeat("é", {{ add .MaxLen 1 }}))})
+	require{{ $.Entity.Name }}Code(t, err, coreerrors.BadRequestErrorCode)
+{{- end }}{{ if and .Required .IsText }}
+
+	_, err = svc.Update(ctx, id, &dto.Update{{ $e.Name }}Request{ {{- .GoName }}: utility.GetPointerToPrimitiveType("")})
+	require{{ $.Entity.Name }}Code(t, err, coreerrors.BadRequestErrorCode)
+{{- end }}{{ end }}
+
+	repository.getByID = func({{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error) { return sample{{ .Entity.Name }}Row(1), nil }
+	fail{{ $.Entity.Name }}Copy(t)
+	_, err = svc.Update(ctx, id, patch)
+	require.Error(t, err)
+}
+{{- end }}
+{{- if .Entity.Has "delete" }}
+
+func Test{{ .Entity.Name }}Service_Delete(t *testing.T) {
+	ctx := context.Background()
+	repository := &stub{{ .Entity.Name }}Repository{t: t}
+	svc := &{{ .Entity.Var }}Service{repository: repository}
+	id := sample{{ .Entity.Name }}Row(1).ID
+
+	repository.getByID = func({{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error) { return sample{{ .Entity.Name }}Row(1), nil }
+	repository.delete = func({{ .Entity.IDGo }}) error { return nil }
+	deleted, err := svc.Delete(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, id, deleted.ID)
+
+	repository.delete = func({{ .Entity.IDGo }}) error { return errStub{{ .Entity.Name }} }
+	_, err = svc.Delete(ctx, id)
+	require.ErrorIs(t, err, errStub{{ .Entity.Name }})
+
+	repository.getByID = func({{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error) { return nil, errStub{{ .Entity.Name }} }
+	_, err = svc.Delete(ctx, id)
+	require.ErrorIs(t, err, errStub{{ .Entity.Name }})
+}
+{{- end }}
+{{- if .Entity.Has "get" }}
+
+func Test{{ .Entity.Name }}Service_GetByID(t *testing.T) {
+	ctx := context.Background()
+	repository := &stub{{ .Entity.Name }}Repository{t: t}
+	svc := &{{ .Entity.Var }}Service{repository: repository}
+	id := sample{{ .Entity.Name }}Row(1).ID
+
+	repository.getByID = func({{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error) { return sample{{ .Entity.Name }}Row(1), nil }
+	found, err := svc.GetByID(ctx, id)
+	require.NoError(t, err)
+	require.Equal(t, id, found.ID)
+
+	repository.getByID = func({{ .Entity.IDGo }}) (*model.{{ .Entity.Name }}, error) { return nil, errStub{{ .Entity.Name }} }
+	_, err = svc.GetByID(ctx, id)
+	require.ErrorIs(t, err, errStub{{ .Entity.Name }})
+}
+{{- end }}
+{{- if .Entity.Loader }}
+
+func Test{{ .Entity.Name }}Service_GetByIDs(t *testing.T) {
+	ctx := context.Background()
+	repository := &stub{{ .Entity.Name }}Repository{t: t}
+	svc := &{{ .Entity.Var }}Service{repository: repository}
+	ids := []{{ .Entity.IDGo }}{sample{{ .Entity.Name }}Row(1).ID, sample{{ .Entity.Name }}Row(2).ID}
+
+	repository.get = func(q *rqp.Query) ([]*model.{{ .Entity.Name }}, int, error) {
+		require.Equal(t, 2, q.Limit)
+		return []*model.{{ .Entity.Name }}{sample{{ .Entity.Name }}Row(1), sample{{ .Entity.Name }}Row(2)}, 2, nil
+	}
+	found, err := svc.GetByIDs(ctx, ids)
+	require.NoError(t, err)
+	require.Len(t, found, 2)
+
+	repository.get = func(*rqp.Query) ([]*model.{{ .Entity.Name }}, int, error) { return nil, 0, errStub{{ .Entity.Name }} }
+	_, err = svc.GetByIDs(ctx, ids)
+	require.ErrorIs(t, err, errStub{{ .Entity.Name }})
+
+	repository.get = func(*rqp.Query) ([]*model.{{ .Entity.Name }}, int, error) {
+		return []*model.{{ .Entity.Name }}{sample{{ .Entity.Name }}Row(1)}, 1, nil
+	}
+	fail{{ $.Entity.Name }}Copy(t)
+	_, err = svc.GetByIDs(ctx, ids)
+	require.Error(t, err)
+}
+{{- end }}
+{{- if .Entity.Has "list" }}
+
+func Test{{ .Entity.Name }}Service_Get(t *testing.T) {
+	ctx := context.Background()
+	repository := &stub{{ .Entity.Name }}Repository{t: t}
+	svc := &{{ .Entity.Var }}Service{repository: repository}
+
+	repository.get = func(q *rqp.Query) ([]*model.{{ .Entity.Name }}, int, error) {
+		require.Equal(t, default{{ .Entity.Name }}PageSize, q.Limit)
+		return []*model.{{ .Entity.Name }}{sample{{ .Entity.Name }}Row(1)}, 7, nil
+	}
+	page, err := svc.Get(ctx, &coredto.QueryBuilder{
+		Filters: []coredto.Filter{ {Field: "createdBy", Operator: "EQ", Value: "u"} },
+		Sort:    []*coredto.Sort{ {SortBy: "createdAt", Order: coredto.DESC} },
+	})
+	require.NoError(t, err)
+	require.Equal(t, 7, page.TotalCount)
+	require.Len(t, page.Data, 1)
+
+	repository.get = func(*rqp.Query) ([]*model.{{ .Entity.Name }}, int, error) { return nil, 0, errStub{{ .Entity.Name }} }
+	_, err = svc.Get(ctx, &coredto.QueryBuilder{})
+	require.ErrorIs(t, err, errStub{{ .Entity.Name }})
+
+	for name, query := range map[string]*coredto.QueryBuilder{
+		"page too large":   {Limit: max{{ .Entity.Name }}PageSize + 1},
+		"negative size":    {Limit: -1},
+		"bad like value":   {Filters: []coredto.Filter{ {Field: "id", Operator: "LIKE", Value: 5} }},
+		"negative offset":  {Limit: 1, Offset: -1},
+		"unknown column":   {Filters: []coredto.Filter{ {Field: "password", Operator: "EQ"} }},
+		"unknown operator": {Filters: []coredto.Filter{ {Field: "id", Operator: "DROP"} }},
+		"unknown sort":     {Sort: []*coredto.Sort{ {SortBy: "id; drop table x"} }},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := svc.Get(ctx, query)
+			require{{ $.Entity.Name }}Code(t, err, coreerrors.BadRequestErrorCode)
+		})
+	}
+}
+{{- end }}

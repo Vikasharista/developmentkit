@@ -1,0 +1,58 @@
+{{- if .Module.REST -}}
+package rest
+
+import (
+	"strconv"
+	"strings"
+
+	coredto "{{ .Service.CoreModule }}/dto"
+	coreerrors "{{ .Service.CoreModule }}/errors"
+	"github.com/gin-gonic/gin"
+)
+
+// reservedQueryParams are list parameters that are not column filters.
+var reservedQueryParams = map[string]bool{"page": true, "size": true, "sort": true}
+
+// queryBuilderFromRequest reads ?page=1&size=10&sort=-createdAt,code&<column>=<value>.
+// Every other parameter becomes an EQ filter; the service rejects unknown columns.
+func queryBuilderFromRequest(c *gin.Context) (*coredto.QueryBuilder, error) {
+	pageNumber, err := positiveIntParam(c, "page", 1)
+	if err != nil {
+		return nil, err
+	}
+	pageSize, err := positiveIntParam(c, "size", 10)
+	if err != nil {
+		return nil, err
+	}
+
+	queryBuilder := &coredto.QueryBuilder{Limit: pageSize, Offset: (pageNumber - 1) * pageSize}
+	for _, sortParam := range c.QueryArray("sort") {
+		for _, field := range strings.Split(sortParam, ",") {
+			order := coredto.ASC
+			if strings.HasPrefix(field, "-") {
+				order, field = coredto.DESC, strings.TrimPrefix(field, "-")
+			}
+			queryBuilder.Sort = append(queryBuilder.Sort, &coredto.Sort{SortBy: field, Order: order})
+		}
+	}
+	for key, values := range c.Request.URL.Query() {
+		if reservedQueryParams[key] {
+			continue
+		}
+		queryBuilder.Filters = append(queryBuilder.Filters, coredto.Filter{Field: key, Operator: "EQ", Value: values[0]})
+	}
+	return queryBuilder, nil
+}
+
+func positiveIntParam(c *gin.Context, name string, fallback int) (int, error) {
+	raw := c.Query(name)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.Atoi(raw)
+	if err != nil || value < 1 {
+		return 0, coreerrors.NewBadRequestError(name + " must be a positive integer")
+	}
+	return value, nil
+}
+{{- end }}

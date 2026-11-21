@@ -1,0 +1,53 @@
+//go:build integration
+
+package internal
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"testing"
+
+	"{{ .Service.CoreModule }}/config"
+	"{{ .ModuleImport }}/auth"
+	"{{ .Service.ModulePath }}/internal/testutil/pgtest"
+	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
+)
+
+func TestMain(m *testing.M) { pgtest.Main(m) }
+
+func withTestConfig(t *testing.T) {
+	previous := config.Viper
+	t.Cleanup(func() { config.Viper = previous })
+	config.Viper = viper.New()
+	config.Viper.Set("database.postgres.dsn", pgtest.DSN())
+	config.Viper.Set("server.port", "0")
+}
+
+func TestInit(t *testing.T) {
+	withTestConfig(t)
+	passThroughAuth(t)
+	previous := runRouter
+	t.Cleanup(func() { runRouter = previous })
+
+	var served *gin.Engine
+	runRouter = func(router *gin.Engine, addr string) error {
+		served = router
+		require.Equal(t, ":0", addr)
+		return nil
+	}
+	require.NoError(t, Init())
+	require.Equal(t, http.StatusOK, serve(served, http.MethodGet, "/healthz", "").Code)
+	require.NoError(t, pingDatabase(context.Background()))
+}
+
+func TestInit_RouterError(t *testing.T) {
+	withTestConfig(t)
+	previous := auth.New
+	t.Cleanup(func() { auth.New = previous })
+	auth.New = func() (*auth.Directives, error) { return nil, errors.New("no auth config") }
+
+	require.Error(t, Init())
+}

@@ -1,0 +1,66 @@
+{{- if .Module.REST -}}
+package rest
+
+import (
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	coreerrors "{{ .Service.CoreModule }}/errors"
+	"{{ .Service.CoreModule }}/utility"
+	"{{ .ModuleImport }}/auth"
+	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/require"
+)
+
+func TestInit(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	previous := auth.New
+	t.Cleanup(func() { auth.New = previous })
+
+	auth.New = func() (*auth.Directives, error) { return auth.PassThrough(), nil }
+	require.NoError(t, Init(gin.New().Group("/{{ .Module.Route }}/v1")))
+
+	auth.New = func() (*auth.Directives, error) { return nil, errors.New("no auth config") }
+	require.Error(t, Init(gin.New().Group("/{{ .Module.Route }}/v1")))
+}
+
+func TestEnrichContext(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/", enrichContext(), func(c *gin.Context) {
+		namespace, err := utility.GetNamespaceID(c.Request.Context())
+		require.NoError(t, err)
+		c.String(http.StatusOK, namespace)
+	})
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("X-Namespace-Id", "ns-1")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	require.Equal(t, "ns-1", recorder.Body.String())
+}
+
+func TestWriteError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		err  error
+		want int
+	}{
+		{coreerrors.NewBadRequestError("bad"), http.StatusBadRequest},
+		{coreerrors.NewRecordNotFoundError("missing"), http.StatusNotFound},
+		{coreerrors.NewDuplicateRequestError("dup"), http.StatusConflict},
+		{coreerrors.NewForbiddenError("no"), http.StatusForbidden},
+		{coreerrors.NewInternalServerError("boom"), http.StatusInternalServerError},
+		{errors.New("plain"), http.StatusInternalServerError},
+	}
+	for _, tc := range cases {
+		recorder := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(recorder)
+		writeError(c, tc.err)
+		require.Equal(t, tc.want, recorder.Code, tc.err.Error())
+	}
+}
+
+{{- end }}

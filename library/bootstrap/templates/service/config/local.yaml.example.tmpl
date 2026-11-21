@@ -1,0 +1,7 @@
+# Copy to config/local.yaml (gitignored). `make serve` and `make migrate-up` load it
+# through OVERRIDE_CONFIG_PATH=config OVERRIDE_CONFIG_FILE=local.
+database:
+  postgres:
+    dsn: "postgres://postgres:postgres@localhost:{{ .Service.DBPort }}/{{ .Service.DBName }}?sslmode=disable"
+server:
+  playground: true

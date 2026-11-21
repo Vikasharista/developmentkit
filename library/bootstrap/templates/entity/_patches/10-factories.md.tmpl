@@ -1,0 +1,34 @@
+## internal/app/{{ .Module.Name }}/repository/factory.go
+
+Add to the factory struct, mirroring the existing entries:
+
+```go
+{{ .Entity.Var }}Repository     {{ .Entity.Name }}Repository
+{{ .Entity.Var }}RepositorySync sync.Once
+```
+
+Add the getter:
+
+```go
+func (f *factory) Get{{ .Entity.Name }}Repository() {{ .Entity.Name }}Repository {
+	f.{{ .Entity.Var }}RepositorySync.Do(func() { f.{{ .Entity.Var }}Repository = new{{ .Entity.Name }}Repository() })
+	return f.{{ .Entity.Var }}Repository
+}
+```
+
+## internal/app/{{ .Module.Name }}/service/factory.go
+
+```go
+{{ .Entity.Var }}Service     {{ .Entity.Name }}Service
+{{ .Entity.Var }}ServiceSync sync.Once
+```
+
+```go
+func (f *factory) Get{{ .Entity.Name }}Service() {{ .Entity.Name }}Service {
+	f.{{ .Entity.Var }}ServiceSync.Do(func() { f.{{ .Entity.Var }}Service = new{{ .Entity.Name }}Service() })
+	return f.{{ .Entity.Var }}Service
+}
+```
+
+If the module's factories are exported (`Factory`) or named differently, follow the module, not this snippet.
+Add a factory test asserting both getters return the same non-nil instance twice.

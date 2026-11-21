@@ -1,0 +1,121 @@
+package internal
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"{{ .Service.CoreModule }}/config"
+	"{{ .ModuleImport }}/auth"
+	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
+)
+
+func init() { gin.SetMode(gin.TestMode) }
+
+func passThroughAuth(t *testing.T) {
+	previous := auth.New
+	t.Cleanup(func() { auth.New = previous })
+	auth.New = func() (*auth.Directives, error) { return auth.PassThrough(), nil }
+}
+
+func serve(router http.Handler, method, path, body string) *httptest.ResponseRecorder {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(method, path, strings.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func TestHealthHandlers(t *testing.T) {
+	router := gin.New()
+	router.GET("/up", healthzHandler(func(context.Context) error { return nil }))
+	router.GET("/down", healthzHandler(func(context.Context) error { return errors.New("no db") }))
+	router.GET("/livez", livezHandler)
+
+	require.Equal(t, http.StatusOK, serve(router, http.MethodGet, "/up", "").Code)
+	require.Equal(t, http.StatusServiceUnavailable, serve(router, http.MethodGet, "/down", "").Code)
+	require.Equal(t, http.StatusOK, serve(router, http.MethodGet, "/livez", "").Code)
+}
+
+func TestPingDatabase_NotInitialised(t *testing.T) {
+	previous := getDatabase
+	t.Cleanup(func() { getDatabase = previous })
+	getDatabase = func() *gorm.DB { return nil }
+
+	require.Error(t, pingDatabase(context.Background()))
+}
+
+func withPlayground(t *testing.T, enabled bool) {
+	previous := config.Viper
+	t.Cleanup(func() { config.Viper = previous })
+	config.Viper = viper.New()
+	config.Viper.Set("server.playground", enabled)
+}
+
+func TestNewRouter(t *testing.T) {
+	passThroughAuth(t)
+	withPlayground(t, true)
+
+	router, err := NewRouter()
+	require.NoError(t, err)
+
+	for _, prefix := range routePrefixes {
+		require.Equal(t, http.StatusOK, serve(router, http.MethodGet, prefix+"/livez", "").Code, prefix)
+{{- if .Module.GraphQL }}
+		require.Equal(t, http.StatusOK, serve(router, http.MethodGet, prefix+"/{{ .Module.Route }}/playground", "").Code, prefix)
+		require.Equal(t, http.StatusOK, serve(router, http.MethodPost, prefix+"/{{ .Module.Route }}", `{"query":"{ __typename }"}`).Code, prefix)
+{{- end }}
+	}
+}
+{{- if .Module.GraphQL }}
+
+func TestNewRouter_PlaygroundOff(t *testing.T) {
+	passThroughAuth(t)
+	withPlayground(t, false)
+
+	router, err := NewRouter()
+	require.NoError(t, err)
+	require.Equal(t, http.StatusNotFound, serve(router, http.MethodGet, "/{{ .Module.Route }}/playground", "").Code)
+}
+{{- end }}
+
+func TestNewRouter_ModuleError(t *testing.T) {
+	withPlayground(t, false)
+	previous := auth.New
+	t.Cleanup(func() { auth.New = previous })
+{{- if .Module.GraphQL }}
+
+	auth.New = func() (*auth.Directives, error) { return nil, errors.New("no auth config") }
+	_, err := NewRouter()
+	require.Error(t, err)
+{{- end }}
+{{- if .Module.REST }}
+
+	// The first module wiring succeeds, the REST one fails.
+	calls := 0
+	auth.New = func() (*auth.Directives, error) {
+		calls++
+		if calls > {{ if .Module.GraphQL }}1{{ else }}0{{ end }} {
+			return nil, errors.New("no auth config")
+		}
+		return auth.PassThrough(), nil
+	}
+	_, err {{ if .Module.GraphQL }}={{ else }}:={{ end }} NewRouter()
+	require.Error(t, err)
+{{- end }}
+}
+
+func TestInit_InvalidDSN(t *testing.T) {
+	previous := config.Viper
+	t.Cleanup(func() { config.Viper = previous })
+	config.Viper = viper.New()
+	config.Viper.Set("database.postgres.dsn", "host=127.0.0.1 port=1 user=none dbname=none sslmode=disable connect_timeout=1")
+
+	require.Error(t, Init())
+}

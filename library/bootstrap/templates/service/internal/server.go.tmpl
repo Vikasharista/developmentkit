@@ -1,0 +1,83 @@
+package internal
+
+import (
+	"fmt"
+
+	"{{ .Service.CoreModule }}/config"
+	"{{ .Service.CoreModule }}/database/postgres"
+{{- if .Module.GraphQL }}
+	{{ .ModuleAlias }}Graphql "{{ .ModuleImport }}/graphql"
+{{- end }}
+{{- if .Module.REST }}
+	{{ .ModuleAlias }}Rest "{{ .ModuleImport }}/rest"
+{{- end }}
+{{- if .Module.GraphQL }}
+	"github.com/99designs/gqlgen/graphql/playground"
+{{- end }}
+	"github.com/gin-gonic/gin"
+)
+
+// routePrefixes lists where every route is mounted. The root serves calls from a
+// gateway that strips the service prefix; the prefix serves calls that keep it.
+var routePrefixes = []string{"", "{{ .Service.RoutePrefix }}"}
+
+// runRouter starts the HTTP server. Tests replace it so Init returns.
+var runRouter = func(router *gin.Engine, addr string) error { return router.Run(addr) }
+
+// Init is core-lib's ServeFunc: connect to Postgres, build the router, serve.
+func Init() error {
+	if err := postgres.InitPostgres(&postgres.PostgresConnectionConfig{
+		DSN:                config.Viper.GetString("database.postgres.dsn"),
+		MaxIdleConnections: config.Viper.GetInt("database.postgres.max_idle_connections"),
+		MaxOpenConnections: config.Viper.GetInt("database.postgres.max_open_connections"),
+	}); err != nil {
+		return err
+	}
+
+	router, err := NewRouter()
+	if err != nil {
+		return err
+	}
+	return runRouter(router, fmt.Sprintf(":%s", config.Viper.GetString("server.port")))
+}
+
+// NewRouter wires health checks and every module under every route prefix.
+func NewRouter() (*gin.Engine, error) {
+	router := gin.New()
+	router.Use(gin.Logger(), gin.Recovery())
+{{ if .Module.GraphQL }}
+	{{ .ModuleAlias }}Handler, err := {{ .ModuleAlias }}Graphql.Init()
+	if err != nil {
+		return nil, err
+	}
+{{- end }}
+
+	for _, prefix := range routePrefixes {
+		group := router.Group(prefix)
+		group.GET("/healthz", healthzHandler(pingDatabase))
+		group.GET("/livez", livezHandler)
+{{ if .Module.GraphQL }}
+		group.POST("/{{ .Module.Route }}", gin.WrapH({{ .ModuleAlias }}Handler))
+		if config.Viper.GetBool("server.playground") {
+			group.GET("/{{ .Module.Route }}/playground", playgroundHandler(prefix+"/{{ .Module.Route }}"))
+		}
+{{- end }}
+{{- if .Module.REST }}
+		if err := {{ .ModuleAlias }}Rest.Init(group.Group("/{{ .Module.Route }}/v1")); err != nil {
+			return nil, err
+		}
+{{- end }}
+	}
+
+	return router, nil
+}
+
+{{- if .Module.GraphQL }}
+
+func playgroundHandler(endpoint string) gin.HandlerFunc {
+	h := playground.Handler("GraphQL", endpoint)
+	return func(c *gin.Context) {
+		h.ServeHTTP(c.Writer, c.Request)
+	}
+}
+{{- end }}

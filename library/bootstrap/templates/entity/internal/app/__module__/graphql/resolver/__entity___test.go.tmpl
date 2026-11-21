@@ -1,0 +1,126 @@
+{{- if .Module.GraphQL -}}
+package resolver
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+{{- if .Entity.Has "list" }}
+	coredto "{{ .Service.CoreModule }}/dto"
+{{- end }}
+	"{{ .Service.CoreModule }}/logger"
+	"{{ .ModuleImport }}/dto"
+	"{{ .ModuleImport }}/graphql/generated"
+	"{{ .ModuleImport }}/graphql/mapper"
+	"github.com/jinzhu/copier"
+	"github.com/stretchr/testify/require"
+)
+
+func init() { _, _ = logger.Init(0) }
+
+var errStub{{ .Entity.Name }} = errors.New("stub failure")
+
+// stub{{ .Entity.Name }}Service returns result and err from every method.
+type stub{{ .Entity.Name }}Service struct {
+	result *dto.{{ .Entity.Name }}
+	err    error
+}
+{{- if .Entity.Has "create" }}
+
+func (s *stub{{ .Entity.Name }}Service) Create(context.Context, *dto.Create{{ .Entity.Name }}Request) (*dto.{{ .Entity.Name }}, error) {
+	return s.result, s.err
+}
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+func (s *stub{{ .Entity.Name }}Service) Update(context.Context, {{ .Entity.IDGo }}, *dto.Update{{ .Entity.Name }}Request) (*dto.{{ .Entity.Name }}, error) {
+	return s.result, s.err
+}
+{{- end }}
+{{- if .Entity.Has "delete" }}
+
+func (s *stub{{ .Entity.Name }}Service) Delete(context.Context, {{ .Entity.IDGo }}) (*dto.{{ .Entity.Name }}, error) {
+	return s.result, s.err
+}
+{{- end }}
+{{- if .Entity.Has "get" }}
+
+func (s *stub{{ .Entity.Name }}Service) GetByID(context.Context, {{ .Entity.IDGo }}) (*dto.{{ .Entity.Name }}, error) {
+	return s.result, s.err
+}
+{{- end }}
+{{- if .Entity.Loader }}
+
+func (s *stub{{ .Entity.Name }}Service) GetByIDs(context.Context, []{{ .Entity.IDGo }}) ([]*dto.{{ .Entity.Name }}, error) {
+	return []*dto.{{ .Entity.Name }}{s.result}, s.err
+}
+{{- end }}
+{{- if .Entity.Has "list" }}
+
+func (s *stub{{ .Entity.Name }}Service) Get(context.Context, *coredto.QueryBuilder) (*dto.{{ .Entity.Plural }}, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return &dto.{{ .Entity.Plural }}{Data: []*dto.{{ .Entity.Name }}{s.result}, TotalCount: 1}, nil
+}
+{{- end }}
+
+func fail{{ $.Entity.Name }}GraphqlCopy(t *testing.T) {
+	previous := mapper.CopyWithOption
+	t.Cleanup(func() { mapper.CopyWithOption = previous })
+	mapper.CopyWithOption = func(interface{}, interface{}, copier.Option) error { return errors.New("copy failed") }
+}
+
+func Test{{ .Entity.Name }}Resolvers(t *testing.T) {
+	ctx := context.Background()
+	id := {{ .Entity.IDSample }}
+	ok := &stub{{ .Entity.Name }}Service{result: &dto.{{ .Entity.Name }}{ID: id, IsActive: true, CreatedBy: "u"}}
+	failing := &stub{{ .Entity.Name }}Service{err: errStub{{ .Entity.Name }}}
+	_ = id
+
+	type call func(r *Resolver) (interface{}, error)
+	calls := map[string]call{
+{{- if .Entity.Has "create" }}
+		"create": func(r *Resolver) (interface{}, error) {
+			return (&mutationResolver{r}).Create{{ .Entity.Name }}(ctx, generated.Create{{ .Entity.Name }}Input{})
+		},
+{{- end }}
+{{- if .Entity.Has "update" }}
+		"update": func(r *Resolver) (interface{}, error) {
+			return (&mutationResolver{r}).Update{{ .Entity.Name }}(ctx, id, generated.Update{{ .Entity.Name }}Input{})
+		},
+{{- end }}
+{{- if .Entity.Has "delete" }}
+		"delete": func(r *Resolver) (interface{}, error) {
+			return (&mutationResolver{r}).Delete{{ .Entity.Name }}(ctx, id)
+		},
+{{- end }}
+{{- if .Entity.Has "get" }}
+		"get": func(r *Resolver) (interface{}, error) {
+			return (&queryResolver{r}).{{ .Entity.Name }}(ctx, id)
+		},
+{{- end }}
+{{- if .Entity.Has "list" }}
+		"list": func(r *Resolver) (interface{}, error) {
+			return (&queryResolver{r}).{{ .Entity.Plural }}(ctx, nil, generated.PageInput{FetchSize: 10, PageNumber: 1}, nil)
+		},
+{{- end }}
+	}
+
+	for name, invoke := range calls {
+		t.Run(name, func(t *testing.T) {
+			got, err := invoke(&Resolver{ {{- .Entity.Name }}Service: ok})
+			require.NoError(t, err)
+			require.NotNil(t, got)
+
+			_, err = invoke(&Resolver{ {{- .Entity.Name }}Service: failing})
+			require.ErrorIs(t, err, errStub{{ .Entity.Name }})
+
+			fail{{ $.Entity.Name }}GraphqlCopy(t)
+			_, err = invoke(&Resolver{ {{- .Entity.Name }}Service: ok})
+			require.Error(t, err)
+		})
+	}
+}
+{{- end }}

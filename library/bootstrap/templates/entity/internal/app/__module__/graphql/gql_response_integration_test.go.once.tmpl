@@ -1,0 +1,18 @@
+{{- if .Module.GraphQL -}}
+//go:build integration
+
+package graphql
+
+import "encoding/json"
+
+// gqlError and gqlResponse decode GraphQL responses in this package's e2e tests.
+type gqlError struct {
+	Message    string                 `json:"message"`
+	Extensions map[string]interface{} `json:"extensions"`
+}
+
+type gqlResponse struct {
+	Data   map[string]json.RawMessage `json:"data"`
+	Errors []gqlError                 `json:"errors"`
+}
+{{- end }}

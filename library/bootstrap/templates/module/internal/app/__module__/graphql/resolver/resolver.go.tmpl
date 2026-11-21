@@ -1,0 +1,22 @@
+{{- if .Module.GraphQL -}}
+package resolver
+
+import "{{ .ModuleImport }}/service"
+
+// This file will not be regenerated automatically.
+//
+// It serves as dependency injection for your app, add any dependencies you require here.
+
+//go:generate go run github.com/99designs/gqlgen generate
+type Resolver struct {
+	{{ .Entity.Name }}Service service.{{ .Entity.Name }}Service
+	// bootstrap:resolver-fields
+}
+
+func NewResolver() *Resolver {
+	return &Resolver{
+		{{ .Entity.Name }}Service: service.GetFactory().Get{{ .Entity.Name }}Service(),
+		// bootstrap:resolver-wiring
+	}
+}
+{{- end }}

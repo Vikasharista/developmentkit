@@ -1,0 +1,6 @@
+{{- if .Module.GraphQL -}}
+input Sort {
+  sortBy: String!
+  order: SortOrder = ASC
+}
+{{- end }}

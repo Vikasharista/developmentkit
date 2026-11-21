@@ -1,0 +1,14 @@
+gateway:
+  enabled: true
+  host: alpha.{{ .Service.OrgDomain }}
+  timeout_ms: 0
+  idle_timeout_ms: 0
+  grpc: false
+  routes:
+    {{ .Service.Name }}:
+      prefix: {{ .Service.RoutePrefix }}
+service:
+  ports:
+  - name: http
+    port: 80
+    appPort: {{ .Service.Port }}

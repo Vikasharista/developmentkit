@@ -1,0 +1,6 @@
+{{- if .Module.GraphQL -}}
+input PageInput {
+  fetchSize: Int! = 10
+  pageNumber: Int! = 1
+}
+{{- end }}

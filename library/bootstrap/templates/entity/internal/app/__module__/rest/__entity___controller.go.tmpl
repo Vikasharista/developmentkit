@@ -1,0 +1,143 @@
+{{- define "readID" }}
+{{- if eq .Entity.IDType "int" }}
+	id, ok := parse{{ .Entity.Name }}ID(c)
+	if !ok {
+		return
+	}
+{{- else }}
+	id := c.Param("id")
+{{- end }}
+{{- end }}
+{{- if .Module.REST -}}
+package rest
+
+import (
+	"net/http"
+{{- if eq .Entity.IDType "int" }}
+	"strconv"
+{{- end }}
+
+{{- if or (eq .Entity.IDType "int") (.Entity.Has "create") (.Entity.Has "update") }}
+	coreerrors "{{ .Service.CoreModule }}/errors"
+{{- end }}
+	"{{ .ModuleImport }}/auth"
+{{- if or (.Entity.Has "create") (.Entity.Has "update") }}
+	"{{ .ModuleImport }}/dto"
+{{- end }}
+	"{{ .ModuleImport }}/service"
+	"github.com/gin-gonic/gin"
+)
+
+// {{ .Entity.Var }}Controller serves /{{ .Module.Route }}/v1/{{ .Entity.PluralKebab }}.
+type {{ .Entity.Var }}Controller struct {
+	service service.{{ .Entity.Name }}Service
+}
+
+func new{{ .Entity.Name }}Controller({{ .Entity.Var }}Service service.{{ .Entity.Name }}Service) *{{ .Entity.Var }}Controller {
+	return &{{ .Entity.Var }}Controller{service: {{ .Entity.Var }}Service}
+}
+
+func register{{ .Entity.Name }}Routes(group gin.IRouter, directives *auth.Directives, controller *{{ .Entity.Var }}Controller) {
+	routes := group.Group("/{{ .Entity.PluralKebab }}")
+{{- if .Entity.Has "list" }}
+	routes.GET("", directives.Gin("{{ .Entity.Permission "list" }}"), controller.list)
+{{- end }}
+{{- if .Entity.Has "get" }}
+	routes.GET("/:id", directives.Gin("{{ .Entity.Permission "get" }}"), controller.get)
+{{- end }}
+{{- if .Entity.Has "create" }}
+	routes.POST("", directives.Gin("{{ .Entity.Permission "create" }}"), controller.create)
+{{- end }}
+{{- if .Entity.Has "update" }}
+	routes.PATCH("/:id", directives.Gin("{{ .Entity.Permission "update" }}"), controller.update)
+{{- end }}
+{{- if .Entity.Has "delete" }}
+	routes.DELETE("/:id", directives.Gin("{{ .Entity.Permission "delete" }}"), controller.delete)
+{{- end }}
+}
+{{- if eq .Entity.IDType "int" }}
+
+// parse{{ .Entity.Name }}ID reads :id, answering 400 when it is not an integer.
+func parse{{ .Entity.Name }}ID(c *gin.Context) (int, bool) {
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		writeError(c, coreerrors.NewBadRequestError("id must be an integer"))
+		return 0, false
+	}
+	return id, true
+}
+{{- end }}
+{{- if .Entity.Has "list" }}
+
+func (ctl *{{ .Entity.Var }}Controller) list(c *gin.Context) {
+	queryBuilder, err := queryBuilderFromRequest(c)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	page, err := ctl.service.Get(c.Request.Context(), queryBuilder)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, page)
+}
+{{- end }}
+{{- if .Entity.Has "get" }}
+
+func (ctl *{{ .Entity.Var }}Controller) get(c *gin.Context) {
+{{- template "readID" . }}
+	{{ .Entity.Var }}, err := ctl.service.GetByID(c.Request.Context(), id)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, {{ .Entity.Var }})
+}
+{{- end }}
+{{- if .Entity.Has "create" }}
+
+func (ctl *{{ .Entity.Var }}Controller) create(c *gin.Context) {
+	request := &dto.Create{{ .Entity.Name }}Request{}
+	if err := c.ShouldBindJSON(request); err != nil {
+		writeError(c, coreerrors.NewBadRequestError(err.Error()))
+		return
+	}
+	created, err := ctl.service.Create(c.Request.Context(), request)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, created)
+}
+{{- end }}
+{{- if .Entity.Has "update" }}
+
+func (ctl *{{ .Entity.Var }}Controller) update(c *gin.Context) {
+{{- template "readID" . }}
+	request := &dto.Update{{ .Entity.Name }}Request{}
+	if err := c.ShouldBindJSON(request); err != nil {
+		writeError(c, coreerrors.NewBadRequestError(err.Error()))
+		return
+	}
+	updated, err := ctl.service.Update(c.Request.Context(), id, request)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, updated)
+}
+{{- end }}
+{{- if .Entity.Has "delete" }}
+
+func (ctl *{{ .Entity.Var }}Controller) delete(c *gin.Context) {
+{{- template "readID" . }}
+	deleted, err := ctl.service.Delete(c.Request.Context(), id)
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, deleted)
+}
+{{- end }}
+{{- end }}

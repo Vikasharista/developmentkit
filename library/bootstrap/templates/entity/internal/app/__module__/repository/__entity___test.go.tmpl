@@ -1,0 +1,61 @@
+package repository
+
+import (
+	"context"
+	"testing"
+
+	"{{ .Service.CoreModule }}/constant"
+	"{{ .Service.CoreModule }}/transaction"
+	"{{ .ModuleImport }}/model"
+	"github.com/stretchr/testify/require"
+	rqp "github.com/timsolov/rest-query-parser"
+	"go.uber.org/zap"
+	"gorm.io/driver/postgres"
+	"gorm.io/gorm"
+)
+
+// unreachable{{ .Entity.Name }}Repository talks to a closed port, so every query fails.
+func unreachable{{ .Entity.Name }}Repository(t *testing.T) *{{ .Entity.Var }}Repository {
+	t.Helper()
+	db, err := gorm.Open(postgres.New(postgres.Config{
+		DSN:                  "host=127.0.0.1 port=1 user=none dbname=none sslmode=disable connect_timeout=1",
+		PreferSimpleProtocol: true,
+	}), &gorm.Config{DisableAutomaticPing: true})
+	require.NoError(t, err)
+	return &{{ .Entity.Var }}Repository{logger: zap.NewNop(), GormExecutor: transaction.NewGormExecutor(db)}
+}
+
+func namespaced{{ $.Entity.Name }}Context() context.Context {
+	ctx := context.WithValue(context.Background(), constant.CtxNamespaceID, "ns")
+	ctx = context.WithValue(ctx, constant.CtxNamespaceKey, constant.CtxNamespaceID)
+	ctx = context.WithValue(ctx, constant.CtxUserID, "user")
+	return context.WithValue(ctx, constant.CtxUserKey, constant.CtxUserID)
+}
+
+func Test{{ .Entity.Name }}Repository_DatabaseErrors(t *testing.T) {
+	repository := unreachable{{ .Entity.Name }}Repository(t)
+	ctx := namespaced{{ $.Entity.Name }}Context()
+
+	_, err := repository.Create(ctx, &model.{{ .Entity.Name }}{})
+	require.Error(t, err)
+
+	_, err = repository.Update(ctx, &model.{{ .Entity.Name }}{})
+	require.Error(t, err)
+
+	require.Error(t, repository.Delete(ctx, {{ .Entity.IDSample }}))
+
+	_, _, err = repository.Get(ctx, rqp.New())
+	require.Error(t, err)
+
+	_, err = repository.GetByID(ctx, {{ .Entity.IDSample }})
+	require.Error(t, err)
+}
+
+func Test{{ .Entity.Name }}Repository_RequiresNamespace(t *testing.T) {
+	repository := unreachable{{ .Entity.Name }}Repository(t)
+
+	_, _, err := repository.Get(context.Background(), nil)
+	require.Error(t, err)
+
+	require.Error(t, repository.Delete(context.Background(), {{ .Entity.IDSample }}))
+}

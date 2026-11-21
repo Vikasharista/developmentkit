@@ -1,0 +1,44 @@
+{
+  "mode": "service",
+  "service": {
+    "name": "widget-service",
+    "module_path": "bitbucket.org/your-org/widget-service", "core_module": "bitbucket.org/your-org/core-lib",
+    "description": "Golden sample used to verify the bootstrap templates end to end.",
+    "db_port": 55439
+  },
+  "module": {
+    "name": "catalog",
+    "pg_schema": "catalog",
+    "graphql": true,
+    "rest": true,
+    "description": "Widgets sold through the catalog."
+  },
+  "entity": {
+    "name": "Widget",
+    "plural": "Widgets",
+    "table": "widgets",
+    "id_type": "string",
+    "versioned": true,
+    "loader": true,
+    "description": "A sellable widget.",
+    "permissions": {
+      "create": "your-org::widget-service::widget-service::widget::create",
+      "update": "your-org::widget-service::widget-service::widget::edit",
+      "delete": "your-org::widget-service::widget-service::widget::delete",
+      "get": "your-org::widget-service::widget-service::widget::view",
+      "list": "your-org::widget-service::widget-service::widget::view"
+    },
+    "fields": [
+      {"name": "code", "type": "string", "max_len": 64, "unique": true, "comment": "Business code, unique per namespace"},
+      {"name": "name", "type": "string", "max_len": 256, "index": true},
+      {"name": "description", "type": "text", "nullable": true},
+      {"name": "quantity", "type": "int", "default": "0"},
+      {"name": "unit_price", "type": "decimal", "precision": 12, "scale": 2},
+      {"name": "status", "type": "enum", "enum": ["DRAFT", "ACTIVE", "RETIRED"], "default": "'DRAFT'"},
+      {"name": "attributes", "type": "jsonb", "nullable": true},
+      {"name": "launched_at", "type": "timestamp", "nullable": true},
+      {"name": "is_fragile", "type": "bool", "default": "false"}
+    ]
+  },
+  "migration": {"number": 2, "description": "catalog_widgets"}
+}

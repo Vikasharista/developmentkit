@@ -1,0 +1,65 @@
+# {{ .ModuleTitle }} module
+
+{{ if .Module.Description }}{{ .Module.Description }}{{ else }}Owns {{ .Entity.Plural }}.{{ end }}
+
+## Start here
+
+Read [module conventions](../../doc/module-conventions.md) first if you have not.
+
+## What this module owns
+
+| Entity | Table | Migration |
+|---|---|---|
+| {{ .Entity.Name }} | `{{ .Table }}` | `{{ .MigrationName }}` |
+
+## Public surface
+{{- if .Module.GraphQL }}
+
+GraphQL subgraph at `POST /{{ .Module.Route }}` (playground at `/{{ .Module.Route }}/playground`):
+
+| Operation | Auth |
+|---|---|
+{{- if .Entity.Has "list" }}
+| `{{ .Entity.PluralVar }}(filters, page, sort)` | `{{ .Entity.Directive "list" }}` |
+{{- end }}
+{{- if .Entity.Has "get" }}
+| `{{ .Entity.Var }}(id)` | `{{ .Entity.Directive "get" }}` |
+{{- end }}
+{{- if .Entity.Has "create" }}
+| `create{{ .Entity.Name }}(input)` | `{{ .Entity.Directive "create" }}` |
+{{- end }}
+{{- if .Entity.Has "update" }}
+| `update{{ .Entity.Name }}(id, input)` | `{{ .Entity.Directive "update" }}` |
+{{- end }}
+{{- if .Entity.Has "delete" }}
+| `delete{{ .Entity.Name }}(id)` | `{{ .Entity.Directive "delete" }}` |
+{{- end }}
+{{- if .Entity.Loader }}
+
+`{{ .Entity.Name }}` is a federation entity (`@key(fields: "id")`), resolved through a per-request dataloader.
+{{- end }}
+{{- end }}
+{{- if .Module.REST }}
+
+REST under `/{{ .Module.Route }}/v1/{{ .Entity.PluralKebab }}`: {{ if .Entity.Has "list" }}`GET` (list: `?page=&size=&sort=-createdAt&<column>=<value>`), {{ end }}{{ if .Entity.Has "get" }}`GET /:id`, {{ end }}{{ if .Entity.Has "create" }}`POST`, {{ end }}{{ if .Entity.Has "update" }}`PATCH /:id`, {{ end }}{{ if .Entity.Has "delete" }}`DELETE /:id`{{ end }}.
+Errors answer `{"code": "<core-lib code>", "error": "<message>"}` with 400 / 401 / 403 / 404 / 409 / 500.
+{{- end }}
+
+## Data and migrations
+
+`{{ .Table }}`: {{ range $i, $f := .Entity.Fields }}{{ if $i }}, {{ end }}`{{ $f.Name }}`{{ end }}, plus the core-lib
+columns (`id`, `namespace`, `is_active`{{ if .Entity.Versioned }}, `version`{{ end }}, audit, soft delete) and the audit trigger.
+{{- if .Entity.Versioned }} Updates check `version`, so a concurrent change answers `DUPLICATE_REQUEST`.{{ end }}
+
+List filters and sorts accept only: {{ range $i, $c := .Entity.Sortable }}{{ if $i }}, {{ end }}`{{ $c }}`{{ end }}.
+
+## Change guide
+
+- New column: `make migrate-new`, then model, DTO, schema, `make gql MODULE={{ .Module.Name }}`, the
+  service allow-list, tests, this README.
+- New entity: `/devkit:bootstrap` in entity mode.
+
+## Related docs
+
+- [Repository README](../../../README.md)
+- [AGENTS.md](../../../AGENTS.md)

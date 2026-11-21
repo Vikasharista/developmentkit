@@ -1,0 +1,14 @@
+package repository
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
+
+func TestFactory(t *testing.T) {
+	require.Same(t, GetFactory(), GetFactory())
+	require.NotNil(t, GetFactory().Get{{ .Entity.Name }}Repository())
+	require.Same(t, GetFactory().Get{{ .Entity.Name }}Repository(), GetFactory().Get{{ .Entity.Name }}Repository())
+	// bootstrap:repository-factory-tests
+}

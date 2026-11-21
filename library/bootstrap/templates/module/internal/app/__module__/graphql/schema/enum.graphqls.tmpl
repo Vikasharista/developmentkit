@@ -1,0 +1,21 @@
+{{- if .Module.GraphQL -}}
+enum FilterOperator {
+  EQ
+  LIKE
+  ILIKE
+  IN
+  GTE
+  GT
+  LTE
+  LT
+  IS
+  NOT
+  NE
+  NIN
+}
+
+enum SortOrder {
+  ASC
+  DESC
+}
+{{- end }}

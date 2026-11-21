@@ -1,0 +1,122 @@
+//go:build integration
+
+package repository
+
+import (
+{{- if .Entity.NeedsFmt }}
+	"fmt"
+{{- end }}
+	"testing"
+{{- if .Entity.NeedsTime }}
+	"time"
+{{- end }}
+
+	coreerrors "{{ .Service.CoreModule }}/errors"
+{{- if .Entity.RowNeedsUtility }}
+	"{{ .Service.CoreModule }}/utility"
+{{- end }}
+	"{{ .ModuleImport }}/model"
+	"{{ .Service.ModulePath }}/internal/testutil/pgtest"
+	"github.com/stretchr/testify/require"
+	rqp "github.com/timsolov/rest-query-parser"
+)
+
+func new{{ .Entity.Name }}Row(seed int) *model.{{ .Entity.Name }} {
+	return &model.{{ .Entity.Name }}{
+{{- range .Entity.SampleFields }}
+		{{ .GoName }}: {{ .SeedGo }},
+{{- end }}
+	}
+}
+
+func assert{{ $.Entity.Name }}Code(t *testing.T, err error, code string) {
+	t.Helper()
+	require.Error(t, err)
+	baseErr, ok := err.(coreerrors.BaseErr)
+	require.True(t, ok, "want a core-lib coded error, got %T: %v", err, err)
+	require.Equal(t, code, baseErr.Code())
+}
+
+func Test{{ .Entity.Name }}Repository_Lifecycle(t *testing.T) {
+	repository := new{{ .Entity.Name }}Repository()
+	namespace := pgtest.Namespace(t)
+	ctx := pgtest.Context(namespace)
+
+	created, err := repository.Create(ctx, new{{ .Entity.Name }}Row(1))
+	require.NoError(t, err)
+	require.NotEmpty(t, created.ID)
+	require.Equal(t, namespace, created.Namespace)
+	require.Equal(t, pgtest.User, created.CreatedBy)
+	require.NotNil(t, created.IsActive)
+	require.True(t, *created.IsActive)
+{{- if .Entity.Versioned }}
+	require.Equal(t, 1, created.Version)
+{{- end }}
+
+	_, err = repository.Create(ctx, new{{ .Entity.Name }}Row(2))
+	require.NoError(t, err)
+
+	rows, total, err := repository.Get(ctx, rqp.New())
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Len(t, rows, 2)
+
+	rows, total, err = repository.Get(ctx, rqp.New().SetLimit(1))
+	require.NoError(t, err)
+	require.Equal(t, 2, total)
+	require.Len(t, rows, 1)
+
+	// Another namespace sees nothing.
+	rows, total, err = repository.Get(pgtest.Context(pgtest.Namespace(t)), rqp.New())
+	require.NoError(t, err)
+	require.Zero(t, total)
+	require.Empty(t, rows)
+
+	inactive := false
+	created.IsActive = &inactive
+	updated, err := repository.Update(ctx, created)
+	require.NoError(t, err)
+	require.False(t, *updated.IsActive)
+	require.Equal(t, pgtest.User, updated.UpdatedBy)
+{{- if .Entity.Versioned }}
+	require.Equal(t, 2, updated.Version)
+
+	stale := *updated
+	stale.Version = 1
+	_, err = repository.Update(ctx, &stale)
+	assert{{ $.Entity.Name }}Code(t, err, coreerrors.DuplicateRequestErrorCode)
+{{- end }}
+
+	require.NoError(t, repository.Delete(ctx, created.ID))
+	_, err = repository.GetByID(ctx, created.ID)
+	assert{{ $.Entity.Name }}Code(t, err, coreerrors.RecordNotFoundErrorCode)
+	assert{{ $.Entity.Name }}Code(t, repository.Delete(ctx, created.ID), coreerrors.RecordNotFoundErrorCode)
+
+	_, err = repository.Update(ctx, updated)
+	{{- if .Entity.Versioned }}
+	assert{{ $.Entity.Name }}Code(t, err, coreerrors.DuplicateRequestErrorCode)
+	{{- else }}
+	assert{{ $.Entity.Name }}Code(t, err, coreerrors.RecordNotFoundErrorCode)
+	{{- end }}
+}
+{{- range .Entity.UniqueFields }}
+
+func Test{{ $.Entity.Name }}Repository_Unique{{ .GoName }}(t *testing.T) {
+	repository := new{{ $.Entity.Name }}Repository()
+	ctx := pgtest.Context(pgtest.Namespace(t))
+
+	_, err := repository.Create(ctx, new{{ $.Entity.Name }}Row(7))
+	require.NoError(t, err)
+	_, err = repository.Create(ctx, new{{ $.Entity.Name }}Row(7))
+	assert{{ $.Entity.Name }}Code(t, err, coreerrors.DuplicateRequestErrorCode)
+}
+{{- end }}
+
+func Test{{ .Entity.Name }}Repository_PageQueryError(t *testing.T) {
+	repository := new{{ .Entity.Name }}Repository()
+	ctx := pgtest.Context(pgtest.Namespace(t))
+
+	// The count succeeds, the page query fails on a column that does not exist.
+	_, _, err := repository.Get(ctx, rqp.New().AddSortBy("no_such_column", false))
+	require.Error(t, err)
+}

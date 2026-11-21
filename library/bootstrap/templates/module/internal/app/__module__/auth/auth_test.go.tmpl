@@ -1,0 +1,108 @@
+package auth
+
+import (
+	"context"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"{{ .Service.CoreModule }}/config"
+	coreerrors "{{ .Service.CoreModule }}/errors"
+	"github.com/99designs/gqlgen/graphql"
+	"github.com/gin-gonic/gin"
+	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
+)
+
+type ctxKey string
+
+func TestNew(t *testing.T) {
+	previous := config.Viper
+	t.Cleanup(func() { config.Viper = previous })
+
+	config.Viper = viper.New()
+{{- if eq .Module.Auth "config" }}
+	config.Viper.Set("auth.provider", "permsvc")
+	config.Viper.Set("auth.identity.url", "http://identity.invalid")
+	config.Viper.Set("auth.permsvc.url", "http://permsvc.invalid")
+{{- else }}
+	config.Viper.Set("services.gateway.url", "http://gateway.invalid")
+{{- end }}
+	directives, err := New()
+	require.NoError(t, err)
+	require.NotNil(t, directives.Authenticate)
+	require.NotNil(t, directives.HasPermission)
+{{- if eq .Module.Auth "verifier" }}
+
+	// The verifier adapter forwards to VerifyUserPermission, which rejects a request without a session.
+	_, err = directives.HasPermission(context.Background(), nil, func(ctx context.Context) (interface{}, error) { return nil, nil }, "p")
+	require.Error(t, err)
+{{- end }}
+}
+
+func TestNew_InvalidConfig(t *testing.T) {
+	previous := config.Viper
+	t.Cleanup(func() { config.Viper = previous })
+
+	config.Viper = viper.New()
+{{- if eq .Module.Auth "config" }}
+	config.Viper.Set("auth.provider", "unknown")
+{{- end }}
+	_, err := New()
+	require.Error(t, err)
+}
+
+func TestPassThrough(t *testing.T) {
+	directives := PassThrough()
+	ctx := context.WithValue(context.Background(), ctxKey("k"), "v")
+	next := func(ctx context.Context) (interface{}, error) { return ctx.Value(ctxKey("k")), nil }
+
+	res, err := directives.Authenticate(ctx, nil, next)
+	require.NoError(t, err)
+	require.Equal(t, "v", res)
+
+	res, err = directives.HasPermission(ctx, nil, next, "anything")
+	require.NoError(t, err)
+	require.Equal(t, "v", res)
+}
+
+func TestGin(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	allow := func(ctx context.Context, _ interface{}, next graphql.Resolver) (interface{}, error) { return next(ctx) }
+	allowPermission := func(ctx context.Context, _ interface{}, next graphql.Resolver, _ string) (interface{}, error) {
+		return next(ctx)
+	}
+	refuse := func(err error) Directive {
+		return func(context.Context, interface{}, graphql.Resolver) (interface{}, error) { return nil, err }
+	}
+	refusePermission := func(err error) PermissionDirective {
+		return func(context.Context, interface{}, graphql.Resolver, string) (interface{}, error) { return nil, err }
+	}
+
+	cases := []struct {
+		name       string
+		directives *Directives
+		permission string
+		want       int
+	}{
+		{"authenticated", &Directives{Authenticate: allow, HasPermission: allowPermission}, "", http.StatusOK},
+		{"permitted", &Directives{Authenticate: allow, HasPermission: allowPermission}, "{{ .Module.Name }}::read", http.StatusOK},
+		{"no session", &Directives{Authenticate: refuse(coreerrors.NewUnauthenticatedError("no session"))}, "", http.StatusUnauthorized},
+		{"no permission", &Directives{Authenticate: allow, HasPermission: refusePermission(coreerrors.NewForbiddenError("no"))}, "{{ .Module.Name }}::read", http.StatusForbidden},
+		{"auth service down", &Directives{Authenticate: refuse(errors.New("dial tcp: refused"))}, "", http.StatusServiceUnavailable},
+		{"permission skipped without session", &Directives{
+			Authenticate:  refuse(coreerrors.NewUnauthenticatedError("no session")),
+			HasPermission: allowPermission,
+		}, "{{ .Module.Name }}::read", http.StatusUnauthorized},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			router := gin.New()
+			router.GET("/", tc.directives.Gin(tc.permission), func(c *gin.Context) { c.Status(http.StatusOK) })
+			recorder := httptest.NewRecorder()
+			router.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/", nil))
+			require.Equal(t, tc.want, recorder.Code)
+		})
+	}
+}

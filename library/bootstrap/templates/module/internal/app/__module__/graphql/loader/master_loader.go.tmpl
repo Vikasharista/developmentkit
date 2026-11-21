@@ -1,0 +1,22 @@
+{{- if and .Module.GraphQL .Entity.Loader -}}
+package loader
+
+import (
+	"{{ .Service.CoreModule }}/graphql/loader"
+	"{{ .ModuleImport }}/dto"
+	"{{ .ModuleImport }}/service"
+	"github.com/graph-gophers/dataloader/v7"
+)
+
+type MasterLoader struct {
+	{{ .Entity.Name }}Loader *dataloader.Loader[{{ .Entity.IDGo }}, *dto.{{ .Entity.Name }}]
+	// bootstrap:loader-fields
+}
+
+func NewMasterLoader() *MasterLoader {
+	return &MasterLoader{
+		{{ .Entity.Name }}Loader: loader.NewBuilder(service.GetFactory().Get{{ .Entity.Name }}Service().GetByIDs).Build(),
+		// bootstrap:loader-wiring
+	}
+}
+{{- end }}
