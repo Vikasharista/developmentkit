@@ -1,7 +1,7 @@
 # builder image
-FROM golang:1.25.5-alpine3.23 AS builder
+FROM golang:{{ .Service.GoVersion }}-alpine3.23 AS builder
 ENV GO111MODULE=on
-ENV GOPRIVATE="bitbucket.org/<your-org>/core-lib"
+ENV GOPRIVATE="{{ .Service.CoreModule }}"
 RUN apk add --no-cache openssh-client git ca-certificates
 
 RUN mkdir -p -m 0400 ~/.ssh && ssh-keyscan bitbucket.org >> ~/.ssh/known_hosts && \

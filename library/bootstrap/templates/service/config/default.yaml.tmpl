@@ -16,8 +16,13 @@ database:
     max_open_connections: 20
 
 # Dev auth endpoints, as in backend-b. Each environment overrides them.
+# provider: permsvc (identity + permission services, below) or jwt (HS256 bearer tokens; set
+# APP_AUTH_JWT_SECRET in the environment, never here, plus optional issuer and audience).
 auth:
   provider: permsvc
+  jwt:
+    issuer: ""
+    audience: ""
   identity:
     url: https://auth-dev.{{ .Service.OrgDomain }}/identity
   permsvc:

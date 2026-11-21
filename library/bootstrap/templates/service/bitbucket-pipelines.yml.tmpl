@@ -14,7 +14,7 @@ definitions:
   steps:
     - step: &test
         name: test (unit + integration, 100% coverage gate)
-        image: golang:1.25.5
+        image: golang:{{ .Service.GoVersion }}
         services:
           - postgres
         script:
